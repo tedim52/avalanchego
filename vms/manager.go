@@ -1,9 +1,10 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package vms
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
@@ -15,7 +16,7 @@ import (
 var (
 	ErrNotFound = errors.New("not found")
 
-	_ Manager = &manager{}
+	_ Manager = (*manager)(nil)
 )
 
 // A Factory creates new instances of a VM
@@ -42,7 +43,7 @@ type Manager interface {
 
 	// Map [vmID] to [factory]. [factory] creates new instances of the vm whose
 	// ID is [vmID]
-	RegisterFactory(vmID ids.ID, factory Factory) error
+	RegisterFactory(ctx context.Context, vmID ids.ID, factory Factory) error
 
 	// ListFactories returns all the IDs that have had factories registered.
 	ListFactories() ([]ids.ID, error)
@@ -82,7 +83,7 @@ func (m *manager) GetFactory(vmID ids.ID) (Factory, error) {
 	return nil, fmt.Errorf("%q was %w", vmID, ErrNotFound)
 }
 
-func (m *manager) RegisterFactory(vmID ids.ID, factory Factory) error {
+func (m *manager) RegisterFactory(ctx context.Context, vmID ids.ID, factory Factory) error {
 	if _, exists := m.factories[vmID]; exists {
 		return fmt.Errorf("%q was already registered as a vm", vmID)
 	}
@@ -102,15 +103,15 @@ func (m *manager) RegisterFactory(vmID ids.ID, factory Factory) error {
 		return nil
 	}
 
-	version, err := commonVM.Version()
+	version, err := commonVM.Version(ctx)
 	if err != nil {
 		// Drop the shutdown error to surface the original error
-		_ = commonVM.Shutdown()
+		_ = commonVM.Shutdown(ctx)
 		return err
 	}
 
 	m.versions[vmID] = version
-	return commonVM.Shutdown()
+	return commonVM.Shutdown(ctx)
 }
 
 func (m *manager) ListFactories() ([]ids.ID, error) {

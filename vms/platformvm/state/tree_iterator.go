@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package state
@@ -11,7 +11,7 @@ import (
 
 const defaultTreeDegree = 2
 
-var _ StakerIterator = &treeIterator{}
+var _ StakerIterator = (*treeIterator)(nil)
 
 type treeIterator struct {
 	current     *Staker
@@ -22,7 +22,7 @@ type treeIterator struct {
 }
 
 // NewTreeIterator returns a new iterator of the stakers in [tree] in ascending
-// order.
+// order. Note that it isn't safe to modify [tree] while iterating over it.
 func NewTreeIterator(tree *btree.BTree) StakerIterator {
 	if tree == nil {
 		return EmptyIterator

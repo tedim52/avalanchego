@@ -1,12 +1,15 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package handler
 
 import (
+	"context"
 	"sync"
 
 	"github.com/prometheus/client_golang/prometheus"
+
+	"go.uber.org/zap"
 
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/message"
@@ -16,20 +19,20 @@ import (
 	"github.com/ava-labs/avalanchego/utils/timer/mockable"
 )
 
-var _ MessageQueue = &messageQueue{}
+var _ MessageQueue = (*messageQueue)(nil)
 
 type MessageQueue interface {
 	// Add a message.
 	//
 	// If called after [Shutdown], the message will immediately be marked as
 	// having been handled.
-	Push(message.InboundMessage)
+	Push(context.Context, message.InboundMessage)
 
-	// Get and remove a message.
+	// Remove and return a message and its context.
 	//
 	// If there are no available messages, this function will block until a
 	// message becomes available or the queue is [Shutdown].
-	Pop() (message.InboundMessage, bool)
+	Pop() (context.Context, message.InboundMessage, bool)
 
 	// Returns the number of messages currently on the queue
 	Len() int
@@ -57,7 +60,7 @@ type messageQueue struct {
 	// Node ID --> Messages this node has in [msgs]
 	nodeToUnprocessedMsgs map[ids.NodeID]int
 	// Unprocessed messages
-	msgs []message.InboundMessage
+	msgAndCtxs []*msgAndContext
 }
 
 func NewMessageQueue(
@@ -78,7 +81,7 @@ func NewMessageQueue(
 	return m, m.metrics.initialize(metricsNamespace, metricsRegisterer, ops)
 }
 
-func (m *messageQueue) Push(msg message.InboundMessage) {
+func (m *messageQueue) Push(ctx context.Context, msg message.InboundMessage) {
 	m.cond.L.Lock()
 	defer m.cond.L.Unlock()
 
@@ -88,7 +91,10 @@ func (m *messageQueue) Push(msg message.InboundMessage) {
 	}
 
 	// Add the message to the queue
-	m.msgs = append(m.msgs, msg)
+	m.msgAndCtxs = append(m.msgAndCtxs, &msgAndContext{
+		msg: msg,
+		ctx: ctx,
+	})
 	m.nodeToUnprocessedMsgs[msg.NodeID()]++
 
 	// Update metrics
@@ -102,35 +108,43 @@ func (m *messageQueue) Push(msg message.InboundMessage) {
 
 // FIFO, but skip over messages whose senders whose messages have caused us to
 // use excessive CPU recently.
-func (m *messageQueue) Pop() (message.InboundMessage, bool) {
+func (m *messageQueue) Pop() (context.Context, message.InboundMessage, bool) {
 	m.cond.L.Lock()
 	defer m.cond.L.Unlock()
 
 	for {
 		if m.closed {
-			return nil, false
+			return nil, nil, false
 		}
-		if len(m.msgs) != 0 {
+		if len(m.msgAndCtxs) != 0 {
 			break
 		}
 		m.cond.Wait()
 	}
 
-	n := len(m.msgs)
+	n := len(m.msgAndCtxs)
 	i := 0
 	for {
 		if i == n {
-			m.log.Debug("canPop is false for all %d unprocessed messages", n)
+			m.log.Debug("canPop is false for all unprocessed messages",
+				zap.Int("numMessages", n),
+			)
 		}
-		msg := m.msgs[0]
-		m.msgs[0] = nil
-		nodeID := msg.NodeID()
+
+		var (
+			msgAndCtx = m.msgAndCtxs[0]
+			msg       = msgAndCtx.msg
+			ctx       = msgAndCtx.ctx
+			nodeID    = msg.NodeID()
+		)
+		m.msgAndCtxs[0] = nil
+
 		// See if it's OK to process [msg] next
 		if m.canPop(msg) || i == n { // i should never == n but handle anyway as a fail-safe
-			if cap(m.msgs) == 1 {
-				m.msgs = nil // Give back memory if possible
+			if cap(m.msgAndCtxs) == 1 {
+				m.msgAndCtxs = nil // Give back memory if possible
 			} else {
-				m.msgs = m.msgs[1:]
+				m.msgAndCtxs = m.msgAndCtxs[1:]
 			}
 			m.nodeToUnprocessedMsgs[nodeID]--
 			if m.nodeToUnprocessedMsgs[nodeID] == 0 {
@@ -139,12 +153,12 @@ func (m *messageQueue) Pop() (message.InboundMessage, bool) {
 			m.metrics.nodesWithMessages.Set(float64(len(m.nodeToUnprocessedMsgs)))
 			m.metrics.len.Dec()
 			m.metrics.ops[msg.Op()].Dec()
-			return msg, true
+			return ctx, msg, true
 		}
 		// [msg.nodeID] is causing excessive CPU usage.
 		// Push [msg] to back of [m.msgs] and handle it later.
-		m.msgs = append(m.msgs, msg)
-		m.msgs = m.msgs[1:]
+		m.msgAndCtxs = append(m.msgAndCtxs, msgAndCtx)
+		m.msgAndCtxs = m.msgAndCtxs[1:]
 		i++
 		m.metrics.numExcessiveCPU.Inc()
 	}
@@ -154,7 +168,7 @@ func (m *messageQueue) Len() int {
 	m.cond.L.Lock()
 	defer m.cond.L.Unlock()
 
-	return len(m.msgs)
+	return len(m.msgAndCtxs)
 }
 
 func (m *messageQueue) Shutdown() {
@@ -162,10 +176,10 @@ func (m *messageQueue) Shutdown() {
 	defer m.cond.L.Unlock()
 
 	// Remove all the current messages from the queue
-	for _, msg := range m.msgs {
-		msg.OnFinishedHandling()
+	for _, msg := range m.msgAndCtxs {
+		msg.msg.OnFinishedHandling()
 	}
-	m.msgs = nil
+	m.msgAndCtxs = nil
 	m.nodeToUnprocessedMsgs = nil
 
 	// Update metrics
@@ -180,13 +194,13 @@ func (m *messageQueue) Shutdown() {
 // canPop will return true for at least one message in [m.msgs]
 func (m *messageQueue) canPop(msg message.InboundMessage) bool {
 	// Always pop connected and disconnected messages.
-	if op := msg.Op(); op == message.Connected || op == message.Disconnected {
+	if op := msg.Op(); op == message.ConnectedOp || op == message.DisconnectedOp {
 		return true
 	}
 
 	// If the deadline to handle [msg] has passed, always pop it.
 	// It will be dropped immediately.
-	if expirationTime := msg.ExpirationTime(); !expirationTime.IsZero() && m.clock.Time().After(expirationTime) {
+	if expiration := msg.Expiration(); m.clock.Time().After(expiration) {
 		return true
 	}
 	// Every node has some allowed CPU allocation depending on
@@ -208,4 +222,9 @@ func (m *messageQueue) canPop(msg message.InboundMessage) bool {
 	recentCPUUsage := m.cpuTracker.Usage(nodeID, m.clock.Time())
 	maxCPU := baseMaxCPU + (1.0-baseMaxCPU)*portionWeight
 	return recentCPUUsage <= maxCPU
+}
+
+type msgAndContext struct {
+	msg message.InboundMessage
+	ctx context.Context
 }

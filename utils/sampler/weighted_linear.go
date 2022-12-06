@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package sampler
@@ -9,7 +9,7 @@ import (
 	safemath "github.com/ava-labs/avalanchego/utils/math"
 )
 
-var _ Weighted = &weightedLinear{}
+var _ Weighted = (*weightedLinear)(nil)
 
 type weightedLinearElement struct {
 	cumulativeWeight uint64

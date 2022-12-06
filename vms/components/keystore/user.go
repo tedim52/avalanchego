@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package keystore
@@ -25,7 +25,7 @@ var (
 
 	errMaxAddresses = fmt.Errorf("keystore user has reached its limit of %d addresses", maxKeystoreAddresses)
 
-	_ User = &user{}
+	_ User = (*user)(nil)
 )
 
 type User interface {
@@ -135,7 +135,9 @@ func (u *user) GetKey(address ids.ShortID) (*crypto.PrivateKeySECP256K1R, error)
 	return sk, nil
 }
 
-func (u *user) Close() error { return u.db.Close() }
+func (u *user) Close() error {
+	return u.db.Close()
+}
 
 // Create and store a new key that will be controlled by this user.
 func NewKey(u User) (*crypto.PrivateKeySECP256K1R, error) {

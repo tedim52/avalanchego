@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package throttling
@@ -13,8 +13,8 @@ import (
 )
 
 var (
-	_ InboundConnUpgradeThrottler = &inboundConnUpgradeThrottler{}
-	_ InboundConnUpgradeThrottler = &noInboundConnUpgradeThrottler{}
+	_ InboundConnUpgradeThrottler = (*inboundConnUpgradeThrottler)(nil)
+	_ InboundConnUpgradeThrottler = (*noInboundConnUpgradeThrottler)(nil)
 )
 
 // InboundConnUpgradeThrottler returns whether we should upgrade an inbound connection from IP [ipStr].
@@ -69,9 +69,13 @@ func NewInboundConnUpgradeThrottler(log logging.Logger, config InboundConnUpgrad
 // noInboundConnUpgradeThrottler upgrades all inbound connections
 type noInboundConnUpgradeThrottler struct{}
 
-func (*noInboundConnUpgradeThrottler) Dispatch()                     {}
-func (*noInboundConnUpgradeThrottler) Stop()                         {}
-func (*noInboundConnUpgradeThrottler) ShouldUpgrade(ips.IPPort) bool { return true }
+func (*noInboundConnUpgradeThrottler) Dispatch() {}
+
+func (*noInboundConnUpgradeThrottler) Stop() {}
+
+func (*noInboundConnUpgradeThrottler) ShouldUpgrade(ips.IPPort) bool {
+	return true
+}
 
 type ipAndTime struct {
 	ip                string

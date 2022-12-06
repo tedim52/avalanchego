@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package ids
@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestShortString(t *testing.T) {
@@ -39,20 +39,20 @@ func TestShortString(t *testing.T) {
 
 func TestIsUniqueShortIDs(t *testing.T) {
 	ids := []ShortID{}
-	if IsUniqueShortIDs(ids) == false {
+	if !IsUniqueShortIDs(ids) {
 		t.Fatal("should be unique")
 	}
 	id1 := GenerateTestShortID()
 	ids = append(ids, id1)
-	if IsUniqueShortIDs(ids) == false {
+	if !IsUniqueShortIDs(ids) {
 		t.Fatal("should be unique")
 	}
 	ids = append(ids, GenerateTestShortID())
-	if IsUniqueShortIDs(ids) == false {
+	if !IsUniqueShortIDs(ids) {
 		t.Fatal("should be unique")
 	}
 	ids = append(ids, id1)
-	if IsUniqueShortIDs(ids) == true {
+	if IsUniqueShortIDs(ids) {
 		t.Fatal("should not be unique")
 	}
 }
@@ -158,5 +158,5 @@ func TestShortIDsToStrings(t *testing.T) {
 	shortIDs := []ShortID{{1}, {2}, {2}}
 	expected := []string{"6HgC8KRBEhXYbF4riJyJFLSHt37UNuRt", "BaMPFdqMUQ46BV8iRcwbVfsam55kMqcp", "BaMPFdqMUQ46BV8iRcwbVfsam55kMqcp"}
 	shortStrings := ShortIDsToStrings(shortIDs)
-	assert.EqualValues(t, expected, shortStrings)
+	require.EqualValues(t, expected, shortStrings)
 }

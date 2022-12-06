@@ -1,9 +1,11 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package snowstorm
 
 import (
+	"context"
+
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/snow/choices"
 )
@@ -17,7 +19,7 @@ type Whitelister interface {
 	// Whitelist returns the set of transaction IDs that are explicitly
 	// whitelisted. Transactions that are not explicitly whitelisted are
 	// considered conflicting.
-	Whitelist() (ids.Set, error)
+	Whitelist(context.Context) (ids.Set, error)
 }
 
 // Tx consumes state.
@@ -46,7 +48,7 @@ type Tx interface {
 	//
 	// It is guaranteed that when Verify is called, all the dependencies of
 	// this transaction have already been successfully verified.
-	Verify() error
+	Verify(context.Context) error
 
 	// Bytes returns the binary representation of this transaction.
 	//

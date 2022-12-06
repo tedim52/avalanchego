@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package throttling
@@ -8,10 +8,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/utils/metric"
 	"github.com/ava-labs/avalanchego/utils/wrappers"
-	"github.com/prometheus/client_golang/prometheus"
 )
 
 // See inbound_msg_throttler.go
@@ -68,7 +69,9 @@ func (t *inboundMsgBufferThrottler) Acquire(ctx context.Context, nodeID ids.Node
 	if t.nodeToNumProcessingMsgs[nodeID] < t.maxProcessingMsgsPerNode {
 		t.nodeToNumProcessingMsgs[nodeID]++
 		t.lock.Unlock()
-		return func() { t.release(nodeID) }
+		return func() {
+			t.release(nodeID)
+		}
 	}
 
 	// We're currently processing the maximum number of
@@ -88,7 +91,9 @@ func (t *inboundMsgBufferThrottler) Acquire(ctx context.Context, nodeID ids.Node
 	case <-closeOnAcquireChan:
 		t.lock.Lock()
 		t.nodeToNumProcessingMsgs[nodeID]++
-		releaseFunc = func() { t.release(nodeID) }
+		releaseFunc = func() {
+			t.release(nodeID)
+		}
 	case <-ctx.Done():
 		t.lock.Lock()
 		delete(t.awaitingAcquire, nodeID)

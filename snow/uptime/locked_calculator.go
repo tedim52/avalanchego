@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package uptime
@@ -15,7 +15,7 @@ import (
 var (
 	errNotReady = errors.New("should not be called")
 
-	_ LockedCalculator = &lockedCalculator{}
+	_ LockedCalculator = (*lockedCalculator)(nil)
 )
 
 type LockedCalculator interface {

@@ -1,9 +1,10 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package proposer
 
 import (
+	"context"
 	"sort"
 	"time"
 
@@ -21,10 +22,11 @@ const (
 	MaxDelay       = MaxWindows * WindowDuration
 )
 
-var _ Windower = &windower{}
+var _ Windower = (*windower)(nil)
 
 type Windower interface {
 	Delay(
+		ctx context.Context,
 		chainHeight,
 		pChainHeight uint64,
 		validatorID ids.NodeID,
@@ -50,13 +52,13 @@ func New(state validators.State, subnetID, chainID ids.ID) Windower {
 	}
 }
 
-func (w *windower) Delay(chainHeight, pChainHeight uint64, validatorID ids.NodeID) (time.Duration, error) {
+func (w *windower) Delay(ctx context.Context, chainHeight, pChainHeight uint64, validatorID ids.NodeID) (time.Duration, error) {
 	if validatorID == ids.EmptyNodeID {
 		return MaxDelay, nil
 	}
 
 	// get the validator set by the p-chain height
-	validatorsMap, err := w.state.GetValidatorSet(pChainHeight, w.subnetID)
+	validatorsMap, err := w.state.GetValidatorSet(ctx, pChainHeight, w.subnetID)
 	if err != nil {
 		return 0, err
 	}

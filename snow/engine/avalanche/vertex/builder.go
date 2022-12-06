@@ -1,9 +1,11 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package vertex
 
 import (
+	"context"
+
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/snow/consensus/avalanche"
 	"github.com/ava-labs/avalanchego/snow/consensus/snowstorm"
@@ -13,9 +15,9 @@ import (
 // Builder builds a vertex given a set of parentIDs and transactions.
 type Builder interface {
 	// Build a new vertex from the contents of a vertex
-	BuildVtx(parentIDs []ids.ID, txs []snowstorm.Tx) (avalanche.Vertex, error)
+	BuildVtx(ctx context.Context, parentIDs []ids.ID, txs []snowstorm.Tx) (avalanche.Vertex, error)
 	// Build a new stop vertex from the parents
-	BuildStopVtx(parentIDs []ids.ID) (avalanche.Vertex, error)
+	BuildStopVtx(ctx context.Context, parentIDs []ids.ID) (avalanche.Vertex, error)
 }
 
 // Build a new stateless vertex from the contents of a vertex

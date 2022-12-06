@@ -1,9 +1,10 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package avm
 
 import (
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -11,7 +12,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/ava-labs/avalanchego/codec"
 	"github.com/ava-labs/avalanchego/database"
@@ -44,7 +45,7 @@ func TestIndexTransaction_Ordered(t *testing.T) {
 	avaxID := genesisTx.ID()
 	vm := setupTestVM(t, ctx, baseDBManager, genesisBytes, issuer, indexEnabledAvmConfig)
 	defer func() {
-		if err := vm.Shutdown(); err != nil {
+		if err := vm.Shutdown(context.Background()); err != nil {
 			t.Fatal(err)
 		}
 		ctx.Lock.Unlock()
@@ -94,7 +95,7 @@ func TestIndexTransaction_Ordered(t *testing.T) {
 		ctx.Lock.Lock()
 
 		// get pending transactions
-		txs := vm.PendingTxs()
+		txs := vm.PendingTxs(context.Background())
 		if len(txs) != 1 {
 			t.Fatalf("Should have returned %d tx(s)", 1)
 		}
@@ -115,11 +116,11 @@ func TestIndexTransaction_Ordered(t *testing.T) {
 
 		// index the transaction
 		err := vm.addressTxsIndexer.Accept(uniqueParsedTX.ID(), inputUTXOs, uniqueParsedTX.UTXOs())
-		assert.NoError(t, err)
+		require.NoError(t, err)
 	}
 
 	// ensure length is 5
-	assert.Len(t, uniqueTxs, 5)
+	require.Len(t, uniqueTxs, 5)
 	// for each *UniqueTx check its indexed at right index
 	for i, tx := range uniqueTxs {
 		assertIndexedTX(t, vm.db, uint64(i), addr, txAssetID.ID, tx.ID())
@@ -138,7 +139,7 @@ func TestIndexTransaction_MultipleTransactions(t *testing.T) {
 	avaxID := genesisTx.ID()
 	vm := setupTestVM(t, ctx, baseDBManager, genesisBytes, issuer, indexEnabledAvmConfig)
 	defer func() {
-		if err := vm.Shutdown(); err != nil {
+		if err := vm.Shutdown(context.Background()); err != nil {
 			t.Fatal(err)
 		}
 		ctx.Lock.Unlock()
@@ -186,7 +187,7 @@ func TestIndexTransaction_MultipleTransactions(t *testing.T) {
 		ctx.Lock.Lock()
 
 		// get pending transactions
-		txs := vm.PendingTxs()
+		txs := vm.PendingTxs(context.Background())
 		if len(txs) != 1 {
 			t.Fatalf("Should have returned %d tx(s)", 1)
 		}
@@ -207,11 +208,11 @@ func TestIndexTransaction_MultipleTransactions(t *testing.T) {
 
 		// index the transaction
 		err := vm.addressTxsIndexer.Accept(uniqueParsedTX.ID(), inputUTXOs, uniqueParsedTX.UTXOs())
-		assert.NoError(t, err)
+		require.NoError(t, err)
 	}
 
 	// ensure length is same as keys length
-	assert.Len(t, addressTxMap, len(keys))
+	require.Len(t, addressTxMap, len(keys))
 
 	// for each *UniqueTx check its indexed at right index for the right address
 	for key, tx := range addressTxMap {
@@ -230,7 +231,7 @@ func TestIndexTransaction_MultipleAddresses(t *testing.T) {
 	avaxID := genesisTx.ID()
 	vm := setupTestVM(t, ctx, baseDBManager, genesisBytes, issuer, indexEnabledAvmConfig)
 	defer func() {
-		if err := vm.Shutdown(); err != nil {
+		if err := vm.Shutdown(context.Background()); err != nil {
 			t.Fatal(err)
 		}
 		ctx.Lock.Unlock()
@@ -279,8 +280,8 @@ func TestIndexTransaction_MultipleAddresses(t *testing.T) {
 
 	// index the transaction
 	err := vm.addressTxsIndexer.Accept(tx.ID(), inputUTXOs, tx.UTXOs())
-	assert.NoError(t, err)
-	assert.NoError(t, err)
+	require.NoError(t, err)
+	require.NoError(t, err)
 
 	assertIndexedTX(t, vm.db, uint64(0), addr, txAssetID.ID, tx.ID())
 	assertLatestIdx(t, vm.db, addr, txAssetID.ID, 1)
@@ -295,7 +296,7 @@ func TestIndexTransaction_UnorderedWrites(t *testing.T) {
 	avaxID := genesisTx.ID()
 	vm := setupTestVM(t, ctx, baseDBManager, genesisBytes, issuer, indexEnabledAvmConfig)
 	defer func() {
-		if err := vm.Shutdown(); err != nil {
+		if err := vm.Shutdown(context.Background()); err != nil {
 			t.Fatal(err)
 		}
 		ctx.Lock.Unlock()
@@ -343,7 +344,7 @@ func TestIndexTransaction_UnorderedWrites(t *testing.T) {
 		ctx.Lock.Lock()
 
 		// get pending transactions
-		txs := vm.PendingTxs()
+		txs := vm.PendingTxs(context.Background())
 		if len(txs) != 1 {
 			t.Fatalf("Should have returned %d tx(s)", 1)
 		}
@@ -364,11 +365,11 @@ func TestIndexTransaction_UnorderedWrites(t *testing.T) {
 
 		// index the transaction, NOT calling Accept(ids.ID) method
 		err := vm.addressTxsIndexer.Accept(uniqueParsedTX.ID(), inputUTXOs, uniqueParsedTX.UTXOs())
-		assert.NoError(t, err)
+		require.NoError(t, err)
 	}
 
 	// ensure length is same as keys length
-	assert.Len(t, addressTxMap, len(keys))
+	require.Len(t, addressTxMap, len(keys))
 
 	// for each *UniqueTx check its indexed at right index for the right address
 	for key, tx := range addressTxMap {
@@ -382,7 +383,7 @@ func TestIndexer_Read(t *testing.T) {
 	_, vm, _, _, _ := setup(t, true)
 
 	defer func() {
-		if err := vm.Shutdown(); err != nil {
+		if err := vm.Shutdown(context.Background()); err != nil {
 			t.Fatal(err)
 		}
 		vm.ctx.Lock.Unlock()
@@ -395,16 +396,16 @@ func TestIndexer_Read(t *testing.T) {
 	// setup some fake txs under the above generated address and asset IDs
 	testTxCount := 25
 	testTxs := setupTestTxsInDB(t, vm.db, addr, assetID, testTxCount)
-	assert.Len(t, testTxs, 25)
+	require.Len(t, testTxs, 25)
 
 	// read the pages, 5 items at a time
 	var cursor uint64
 	var pageSize uint64 = 5
 	for cursor < 25 {
 		txIDs, err := vm.addressTxsIndexer.Read(addr[:], assetID, cursor, pageSize)
-		assert.NoError(t, err)
-		assert.Len(t, txIDs, 5)
-		assert.Equal(t, txIDs, testTxs[cursor:cursor+pageSize])
+		require.NoError(t, err)
+		require.Len(t, txIDs, 5)
+		require.Equal(t, txIDs, testTxs[cursor:cursor+pageSize])
 		cursor += pageSize
 	}
 }
@@ -417,15 +418,15 @@ func TestIndexingNewInitWithIndexingEnabled(t *testing.T) {
 
 	// start with indexing enabled
 	_, err := index.NewIndexer(db, ctx.Log, "", prometheus.NewRegistry(), true)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	// now disable indexing with allow-incomplete set to false
 	_, err = index.NewNoIndexer(db, false)
-	assert.Error(t, err)
+	require.Error(t, err)
 
 	// now disable indexing with allow-incomplete set to true
 	_, err = index.NewNoIndexer(db, true)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 }
 
 func TestIndexingNewInitWithIndexingDisabled(t *testing.T) {
@@ -434,23 +435,23 @@ func TestIndexingNewInitWithIndexingDisabled(t *testing.T) {
 
 	// disable indexing with allow-incomplete set to false
 	_, err := index.NewNoIndexer(db, false)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	// It's not OK to have an incomplete index when allowIncompleteIndices is false
 	_, err = index.NewIndexer(db, ctx.Log, "", prometheus.NewRegistry(), false)
-	assert.Error(t, err)
+	require.Error(t, err)
 
 	// It's OK to have an incomplete index when allowIncompleteIndices is true
 	_, err = index.NewIndexer(db, ctx.Log, "", prometheus.NewRegistry(), true)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	// It's OK to have an incomplete index when indexing currently disabled
 	_, err = index.NewNoIndexer(db, false)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	// It's OK to have an incomplete index when allowIncompleteIndices is true
 	_, err = index.NewNoIndexer(db, true)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 }
 
 func TestIndexingAllowIncomplete(t *testing.T) {
@@ -461,14 +462,14 @@ func TestIndexingAllowIncomplete(t *testing.T) {
 	db := versiondb.New(prefixDB)
 	// disabled indexer will persist idxEnabled as false
 	_, err := index.NewNoIndexer(db, false)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	// we initialise with indexing enabled now and allow incomplete indexing as false
 	_, err = index.NewIndexer(db, ctx.Log, "", prometheus.NewRegistry(), false)
 	// we should get error because:
 	// - indexing was disabled previously
 	// - node now is asked to enable indexing with allow incomplete set to false
-	assert.Error(t, err)
+	require.Error(t, err)
 }
 
 func buildPlatformUTXO(utxoID avax.UTXOID, txAssetID avax.Asset, addr ids.ShortID) *avax.UTXO {
@@ -519,9 +520,11 @@ func buildTX(utxoID avax.UTXOID, txAssetID avax.Asset, address ...ids.ShortID) *
 func setupTestVM(t *testing.T, ctx *snow.Context, baseDBManager manager.Manager, genesisBytes []byte, issuer chan common.Message, config Config) *VM {
 	vm := &VM{}
 	avmConfigBytes, err := json.Marshal(config)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	appSender := &common.SenderTest{T: t}
-	if err := vm.Initialize(
+
+	err = vm.Initialize(
+		context.Background(),
 		ctx,
 		baseDBManager.NewPrefixDBManager([]byte{1}),
 		genesisBytes,
@@ -533,16 +536,18 @@ func setupTestVM(t *testing.T, ctx *snow.Context, baseDBManager manager.Manager,
 			Fx: &secp256k1fx.Fx{},
 		}},
 		appSender,
-	); err != nil {
+	)
+	if err != nil {
 		t.Fatal(err)
 	}
+
 	vm.batchTimeout = 0
 
-	if err := vm.SetState(snow.Bootstrapping); err != nil {
+	if err := vm.SetState(context.Background(), snow.Bootstrapping); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := vm.SetState(snow.NormalOp); err != nil {
+	if err := vm.SetState(context.Background(), snow.NormalOp); err != nil {
 		t.Fatal(err)
 	}
 	return vm
@@ -556,9 +561,9 @@ func assertLatestIdx(t *testing.T, db database.Database, sourceAddress ids.Short
 	binary.BigEndian.PutUint64(expectedIdxBytes, expectedIdx)
 
 	idxBytes, err := assetDB.Get([]byte("idx"))
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
-	assert.EqualValues(t, expectedIdxBytes, idxBytes)
+	require.EqualValues(t, expectedIdxBytes, idxBytes)
 }
 
 func checkIndexedTX(db database.Database, index uint64, sourceAddress ids.ShortID, assetID ids.ID, transactionID ids.ID) error {
@@ -607,16 +612,16 @@ func setupTestTxsInDB(t *testing.T, db *versiondb.Database, address ids.ShortID,
 	for _, txID := range testTxs {
 		txID := txID
 		err := assetPrefixDB.Put(idxBytes, txID[:])
-		assert.NoError(t, err)
+		require.NoError(t, err)
 		idx++
 		binary.BigEndian.PutUint64(idxBytes, idx)
 	}
 	_, err := db.CommitBatch()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	err = assetPrefixDB.Put([]byte("idx"), idxBytes)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	err = db.Commit()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	return testTxs
 }

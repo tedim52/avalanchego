@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package txs
@@ -36,8 +36,8 @@ var (
 	errUnexpectedWhitespace         = errors.New("unexpected whitespace provided")
 	errDenominationTooLarge         = errors.New("denomination is too large")
 
-	_ UnsignedTx             = &CreateAssetTx{}
-	_ secp256k1fx.UnsignedTx = &CreateAssetTx{}
+	_ UnsignedTx             = (*CreateAssetTx)(nil)
+	_ secp256k1fx.UnsignedTx = (*CreateAssetTx)(nil)
 )
 
 // CreateAssetTx is a transaction that creates a new asset.
@@ -58,7 +58,9 @@ func (t *CreateAssetTx) InitCtx(ctx *snow.Context) {
 
 // InitialStates track which virtual machines, and the initial state of these
 // machines, this asset uses. The returned array should not be modified.
-func (t *CreateAssetTx) InitialStates() []*InitialState { return t.States }
+func (t *CreateAssetTx) InitialStates() []*InitialState {
+	return t.States
+}
 
 func (t *CreateAssetTx) SyntacticVerify(
 	ctx *snow.Context,
@@ -114,7 +116,9 @@ func (t *CreateAssetTx) SyntacticVerify(
 	return nil
 }
 
-func (t *CreateAssetTx) Sort() { SortInitialStates(t.States) }
+func (t *CreateAssetTx) Sort() {
+	SortInitialStates(t.States)
+}
 
 func (t *CreateAssetTx) Visit(v Visitor) error {
 	return v.CreateAssetTx(t)

@@ -1,10 +1,11 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package mockdb
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"testing"
 )
@@ -46,7 +47,7 @@ func TestDefaultError(t *testing.T) {
 	if err := db.Compact([]byte{}, []byte{}); err == nil {
 		t.Fatal("should have errored")
 	}
-	if _, err := db.HealthCheck(); err == nil {
+	if _, err := db.HealthCheck(context.Background()); err == nil {
 		t.Fatal("should have errored")
 	}
 }

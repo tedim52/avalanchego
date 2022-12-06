@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package ids
@@ -57,7 +57,9 @@ func (b *NodeIDBag) Remove(id NodeID) {
 }
 
 // Len returns the number of times an id has been added.
-func (b *NodeIDBag) Len() int { return b.size }
+func (b *NodeIDBag) Len() int {
+	return b.size
+}
 
 // List returns a list of all IDs that have been added,
 // without duplicates.
@@ -96,4 +98,6 @@ func (b *NodeIDBag) PrefixedString(prefix string) string {
 	return sb.String()
 }
 
-func (b *NodeIDBag) String() string { return b.PrefixedString("") }
+func (b *NodeIDBag) String() string {
+	return b.PrefixedString("")
+}

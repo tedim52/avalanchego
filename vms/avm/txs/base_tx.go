@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package txs
@@ -12,8 +12,8 @@ import (
 )
 
 var (
-	_ UnsignedTx             = &BaseTx{}
-	_ secp256k1fx.UnsignedTx = &BaseTx{}
+	_ UnsignedTx             = (*BaseTx)(nil)
+	_ secp256k1fx.UnsignedTx = (*BaseTx)(nil)
 )
 
 // BaseTx is the basis of all transactions.

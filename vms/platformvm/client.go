@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package platformvm
@@ -20,7 +20,7 @@ import (
 	platformapi "github.com/ava-labs/avalanchego/vms/platformvm/api"
 )
 
-var _ Client = &client{}
+var _ Client = (*client)(nil)
 
 // Client interface for interacting with the P Chain endpoint
 type Client interface {
@@ -57,16 +57,16 @@ type Client interface {
 		options ...rpc.Option,
 	) ([][]byte, ids.ShortID, ids.ID, error)
 	// GetSubnets returns information about the specified subnets
-	GetSubnets(context.Context, []ids.ID, ...rpc.Option) ([]ClientSubnet, error)
+	GetSubnets(ctx context.Context, subnetIDs []ids.ID, options ...rpc.Option) ([]ClientSubnet, error)
 	// GetStakingAssetID returns the assetID of the asset used for staking on
 	// subnet corresponding to [subnetID]
-	GetStakingAssetID(context.Context, ids.ID, ...rpc.Option) (ids.ID, error)
+	GetStakingAssetID(ctx context.Context, subnetID ids.ID, options ...rpc.Option) (ids.ID, error)
 	// GetCurrentValidators returns the list of current validators for subnet with ID [subnetID]
-	GetCurrentValidators(ctx context.Context, subnetID ids.ID, nodeIDs []ids.NodeID, options ...rpc.Option) ([]ClientPrimaryValidator, error)
+	GetCurrentValidators(ctx context.Context, subnetID ids.ID, nodeIDs []ids.NodeID, options ...rpc.Option) ([]ClientPermissionlessValidator, error)
 	// GetPendingValidators returns the list of pending validators for subnet with ID [subnetID]
 	GetPendingValidators(ctx context.Context, subnetID ids.ID, nodeIDs []ids.NodeID, options ...rpc.Option) ([]interface{}, []interface{}, error)
 	// GetCurrentSupply returns an upper bound on the supply of AVAX in the system
-	GetCurrentSupply(ctx context.Context, options ...rpc.Option) (uint64, error)
+	GetCurrentSupply(ctx context.Context, subnetID ids.ID, options ...rpc.Option) (uint64, error)
 	// SampleValidators returns the nodeIDs of a sample of [sampleSize] validators from the current validator set for subnet with ID [subnetID]
 	SampleValidators(ctx context.Context, subnetID ids.ID, sampleSize uint16, options ...rpc.Option) ([]ids.NodeID, error)
 	// AddValidator issues a transaction to add a validator to the primary network
@@ -180,10 +180,10 @@ type Client interface {
 	) (*GetTxStatusResponse, error)
 	// GetStake returns the amount of nAVAX that [addrs] have cumulatively
 	// staked on the Primary Network.
-	GetStake(ctx context.Context, addrs []ids.ShortID, options ...rpc.Option) (uint64, [][]byte, error)
+	GetStake(ctx context.Context, addrs []ids.ShortID, options ...rpc.Option) (map[ids.ID]uint64, [][]byte, error)
 	// GetMinStake returns the minimum staking amount in nAVAX for validators
 	// and delegators respectively
-	GetMinStake(ctx context.Context, options ...rpc.Option) (uint64, uint64, error)
+	GetMinStake(ctx context.Context, subnetID ids.ID, options ...rpc.Option) (uint64, uint64, error)
 	// GetTotalStake returns the total amount (in nAVAX) staked on the network
 	GetTotalStake(ctx context.Context, subnetID ids.ID, options ...rpc.Option) (uint64, error)
 	// GetMaxStakeAmount returns the maximum amount of nAVAX staking to the named
@@ -215,20 +215,19 @@ type client struct {
 // NewClient returns a Client for interacting with the P Chain endpoint
 func NewClient(uri string) Client {
 	return &client{requester: rpc.NewEndpointRequester(
-		uri+"/ext/P",
-		"platform",
+		uri + "/ext/P",
 	)}
 }
 
 func (c *client) GetHeight(ctx context.Context, options ...rpc.Option) (uint64, error) {
 	res := &GetHeightResponse{}
-	err := c.requester.SendRequest(ctx, "getHeight", struct{}{}, res, options...)
+	err := c.requester.SendRequest(ctx, "platform.getHeight", struct{}{}, res, options...)
 	return uint64(res.Height), err
 }
 
 func (c *client) ExportKey(ctx context.Context, user api.UserPass, address ids.ShortID, options ...rpc.Option) (*crypto.PrivateKeySECP256K1R, error) {
 	res := &ExportKeyReply{}
-	err := c.requester.SendRequest(ctx, "exportKey", &ExportKeyArgs{
+	err := c.requester.SendRequest(ctx, "platform.exportKey", &ExportKeyArgs{
 		UserPass: user,
 		Address:  address.String(),
 	}, res, options...)
@@ -237,7 +236,7 @@ func (c *client) ExportKey(ctx context.Context, user api.UserPass, address ids.S
 
 func (c *client) ImportKey(ctx context.Context, user api.UserPass, privateKey *crypto.PrivateKeySECP256K1R, options ...rpc.Option) (ids.ShortID, error) {
 	res := &api.JSONAddress{}
-	err := c.requester.SendRequest(ctx, "importKey", &ImportKeyArgs{
+	err := c.requester.SendRequest(ctx, "platform.importKey", &ImportKeyArgs{
 		UserPass:   user,
 		PrivateKey: privateKey,
 	}, res, options...)
@@ -249,7 +248,7 @@ func (c *client) ImportKey(ctx context.Context, user api.UserPass, privateKey *c
 
 func (c *client) GetBalance(ctx context.Context, addrs []ids.ShortID, options ...rpc.Option) (*GetBalanceResponse, error) {
 	res := &GetBalanceResponse{}
-	err := c.requester.SendRequest(ctx, "getBalance", &GetBalanceRequest{
+	err := c.requester.SendRequest(ctx, "platform.getBalance", &GetBalanceRequest{
 		Addresses: ids.ShortIDsToStrings(addrs),
 	}, res, options...)
 	return res, err
@@ -257,7 +256,7 @@ func (c *client) GetBalance(ctx context.Context, addrs []ids.ShortID, options ..
 
 func (c *client) CreateAddress(ctx context.Context, user api.UserPass, options ...rpc.Option) (ids.ShortID, error) {
 	res := &api.JSONAddress{}
-	err := c.requester.SendRequest(ctx, "createAddress", &user, res, options...)
+	err := c.requester.SendRequest(ctx, "platform.createAddress", &user, res, options...)
 	if err != nil {
 		return ids.ShortID{}, err
 	}
@@ -266,7 +265,7 @@ func (c *client) CreateAddress(ctx context.Context, user api.UserPass, options .
 
 func (c *client) ListAddresses(ctx context.Context, user api.UserPass, options ...rpc.Option) ([]ids.ShortID, error) {
 	res := &api.JSONAddresses{}
-	err := c.requester.SendRequest(ctx, "listAddresses", &user, res, options...)
+	err := c.requester.SendRequest(ctx, "platform.listAddresses", &user, res, options...)
 	if err != nil {
 		return nil, err
 	}
@@ -294,7 +293,7 @@ func (c *client) GetAtomicUTXOs(
 	options ...rpc.Option,
 ) ([][]byte, ids.ShortID, ids.ID, error) {
 	res := &api.GetUTXOsReply{}
-	err := c.requester.SendRequest(ctx, "getUTXOs", &api.GetUTXOsArgs{
+	err := c.requester.SendRequest(ctx, "platform.getUTXOs", &api.GetUTXOsArgs{
 		Addresses:   ids.ShortIDsToStrings(addrs),
 		SourceChain: sourceChain,
 		Limit:       json.Uint32(limit),
@@ -337,7 +336,7 @@ type ClientSubnet struct {
 
 func (c *client) GetSubnets(ctx context.Context, ids []ids.ID, options ...rpc.Option) ([]ClientSubnet, error) {
 	res := &GetSubnetsResponse{}
-	err := c.requester.SendRequest(ctx, "getSubnets", &GetSubnetsArgs{
+	err := c.requester.SendRequest(ctx, "platform.getSubnets", &GetSubnetsArgs{
 		IDs: ids,
 	}, res, options...)
 	if err != nil {
@@ -361,7 +360,7 @@ func (c *client) GetSubnets(ctx context.Context, ids []ids.ID, options ...rpc.Op
 
 func (c *client) GetStakingAssetID(ctx context.Context, subnetID ids.ID, options ...rpc.Option) (ids.ID, error) {
 	res := &GetStakingAssetIDResponse{}
-	err := c.requester.SendRequest(ctx, "getStakingAssetID", &GetStakingAssetIDArgs{
+	err := c.requester.SendRequest(ctx, "platform.getStakingAssetID", &GetStakingAssetIDArgs{
 		SubnetID: subnetID,
 	}, res, options...)
 	return res.AssetID, err
@@ -372,16 +371,16 @@ func (c *client) GetCurrentValidators(
 	subnetID ids.ID,
 	nodeIDs []ids.NodeID,
 	options ...rpc.Option,
-) ([]ClientPrimaryValidator, error) {
+) ([]ClientPermissionlessValidator, error) {
 	res := &GetCurrentValidatorsReply{}
-	err := c.requester.SendRequest(ctx, "getCurrentValidators", &GetCurrentValidatorsArgs{
+	err := c.requester.SendRequest(ctx, "platform.getCurrentValidators", &GetCurrentValidatorsArgs{
 		SubnetID: subnetID,
 		NodeIDs:  nodeIDs,
 	}, res, options...)
 	if err != nil {
 		return nil, err
 	}
-	return getClientPrimaryValidators(res.Validators)
+	return getClientPermissionlessValidators(res.Validators)
 }
 
 func (c *client) GetPendingValidators(
@@ -391,22 +390,24 @@ func (c *client) GetPendingValidators(
 	options ...rpc.Option,
 ) ([]interface{}, []interface{}, error) {
 	res := &GetPendingValidatorsReply{}
-	err := c.requester.SendRequest(ctx, "getPendingValidators", &GetPendingValidatorsArgs{
+	err := c.requester.SendRequest(ctx, "platform.getPendingValidators", &GetPendingValidatorsArgs{
 		SubnetID: subnetID,
 		NodeIDs:  nodeIDs,
 	}, res, options...)
 	return res.Validators, res.Delegators, err
 }
 
-func (c *client) GetCurrentSupply(ctx context.Context, options ...rpc.Option) (uint64, error) {
+func (c *client) GetCurrentSupply(ctx context.Context, subnetID ids.ID, options ...rpc.Option) (uint64, error) {
 	res := &GetCurrentSupplyReply{}
-	err := c.requester.SendRequest(ctx, "getCurrentSupply", struct{}{}, res, options...)
+	err := c.requester.SendRequest(ctx, "platform.getCurrentSupply", &GetCurrentSupplyArgs{
+		SubnetID: subnetID,
+	}, res, options...)
 	return uint64(res.Supply), err
 }
 
 func (c *client) SampleValidators(ctx context.Context, subnetID ids.ID, sampleSize uint16, options ...rpc.Option) ([]ids.NodeID, error) {
 	res := &SampleValidatorsReply{}
-	err := c.requester.SendRequest(ctx, "sampleValidators", &SampleValidatorsArgs{
+	err := c.requester.SendRequest(ctx, "platform.sampleValidators", &SampleValidatorsArgs{
 		SubnetID: subnetID,
 		Size:     json.Uint16(sampleSize),
 	}, res, options...)
@@ -428,7 +429,7 @@ func (c *client) AddValidator(
 ) (ids.ID, error) {
 	res := &api.JSONTxID{}
 	jsonStakeAmount := json.Uint64(stakeAmount)
-	err := c.requester.SendRequest(ctx, "addValidator", &AddValidatorArgs{
+	err := c.requester.SendRequest(ctx, "platform.addValidator", &AddValidatorArgs{
 		JSONSpendHeader: api.JSONSpendHeader{
 			UserPass:       user,
 			JSONFromAddrs:  api.JSONFromAddrs{From: ids.ShortIDsToStrings(from)},
@@ -460,7 +461,7 @@ func (c *client) AddDelegator(
 ) (ids.ID, error) {
 	res := &api.JSONTxID{}
 	jsonStakeAmount := json.Uint64(stakeAmount)
-	err := c.requester.SendRequest(ctx, "addDelegator", &AddDelegatorArgs{
+	err := c.requester.SendRequest(ctx, "platform.addDelegator", &AddDelegatorArgs{
 		JSONSpendHeader: api.JSONSpendHeader{
 			UserPass:       user,
 			JSONFromAddrs:  api.JSONFromAddrs{From: ids.ShortIDsToStrings(from)},
@@ -491,7 +492,7 @@ func (c *client) AddSubnetValidator(
 ) (ids.ID, error) {
 	res := &api.JSONTxID{}
 	jsonStakeAmount := json.Uint64(stakeAmount)
-	err := c.requester.SendRequest(ctx, "addSubnetValidator", &AddSubnetValidatorArgs{
+	err := c.requester.SendRequest(ctx, "platform.addSubnetValidator", &AddSubnetValidatorArgs{
 		JSONSpendHeader: api.JSONSpendHeader{
 			UserPass:       user,
 			JSONFromAddrs:  api.JSONFromAddrs{From: ids.ShortIDsToStrings(from)},
@@ -518,7 +519,7 @@ func (c *client) CreateSubnet(
 	options ...rpc.Option,
 ) (ids.ID, error) {
 	res := &api.JSONTxID{}
-	err := c.requester.SendRequest(ctx, "createSubnet", &CreateSubnetArgs{
+	err := c.requester.SendRequest(ctx, "platform.createSubnet", &CreateSubnetArgs{
 		JSONSpendHeader: api.JSONSpendHeader{
 			UserPass:       user,
 			JSONFromAddrs:  api.JSONFromAddrs{From: ids.ShortIDsToStrings(from)},
@@ -543,7 +544,7 @@ func (c *client) ExportAVAX(
 	options ...rpc.Option,
 ) (ids.ID, error) {
 	res := &api.JSONTxID{}
-	err := c.requester.SendRequest(ctx, "exportAVAX", &ExportAVAXArgs{
+	err := c.requester.SendRequest(ctx, "platform.exportAVAX", &ExportAVAXArgs{
 		JSONSpendHeader: api.JSONSpendHeader{
 			UserPass:       user,
 			JSONFromAddrs:  api.JSONFromAddrs{From: ids.ShortIDsToStrings(from)},
@@ -566,7 +567,7 @@ func (c *client) ImportAVAX(
 	options ...rpc.Option,
 ) (ids.ID, error) {
 	res := &api.JSONTxID{}
-	err := c.requester.SendRequest(ctx, "importAVAX", &ImportAVAXArgs{
+	err := c.requester.SendRequest(ctx, "platform.importAVAX", &ImportAVAXArgs{
 		JSONSpendHeader: api.JSONSpendHeader{
 			UserPass:       user,
 			JSONFromAddrs:  api.JSONFromAddrs{From: ids.ShortIDsToStrings(from)},
@@ -596,7 +597,7 @@ func (c *client) CreateBlockchain(
 	}
 
 	res := &api.JSONTxID{}
-	err = c.requester.SendRequest(ctx, "createBlockchain", &CreateBlockchainArgs{
+	err = c.requester.SendRequest(ctx, "platform.createBlockchain", &CreateBlockchainArgs{
 		JSONSpendHeader: api.JSONSpendHeader{
 			UserPass:       user,
 			JSONFromAddrs:  api.JSONFromAddrs{From: ids.ShortIDsToStrings(from)},
@@ -614,7 +615,7 @@ func (c *client) CreateBlockchain(
 
 func (c *client) GetBlockchainStatus(ctx context.Context, blockchainID string, options ...rpc.Option) (status.BlockchainStatus, error) {
 	res := &GetBlockchainStatusReply{}
-	err := c.requester.SendRequest(ctx, "getBlockchainStatus", &GetBlockchainStatusArgs{
+	err := c.requester.SendRequest(ctx, "platform.getBlockchainStatus", &GetBlockchainStatusArgs{
 		BlockchainID: blockchainID,
 	}, res, options...)
 	return res.Status, err
@@ -622,7 +623,7 @@ func (c *client) GetBlockchainStatus(ctx context.Context, blockchainID string, o
 
 func (c *client) ValidatedBy(ctx context.Context, blockchainID ids.ID, options ...rpc.Option) (ids.ID, error) {
 	res := &ValidatedByResponse{}
-	err := c.requester.SendRequest(ctx, "validatedBy", &ValidatedByArgs{
+	err := c.requester.SendRequest(ctx, "platform.validatedBy", &ValidatedByArgs{
 		BlockchainID: blockchainID,
 	}, res, options...)
 	return res.SubnetID, err
@@ -630,7 +631,7 @@ func (c *client) ValidatedBy(ctx context.Context, blockchainID ids.ID, options .
 
 func (c *client) Validates(ctx context.Context, subnetID ids.ID, options ...rpc.Option) ([]ids.ID, error) {
 	res := &ValidatesResponse{}
-	err := c.requester.SendRequest(ctx, "validates", &ValidatesArgs{
+	err := c.requester.SendRequest(ctx, "platform.validates", &ValidatesArgs{
 		SubnetID: subnetID,
 	}, res, options...)
 	return res.BlockchainIDs, err
@@ -638,7 +639,7 @@ func (c *client) Validates(ctx context.Context, subnetID ids.ID, options ...rpc.
 
 func (c *client) GetBlockchains(ctx context.Context, options ...rpc.Option) ([]APIBlockchain, error) {
 	res := &GetBlockchainsResponse{}
-	err := c.requester.SendRequest(ctx, "getBlockchains", struct{}{}, res, options...)
+	err := c.requester.SendRequest(ctx, "platform.getBlockchains", struct{}{}, res, options...)
 	return res.Blockchains, err
 }
 
@@ -649,7 +650,7 @@ func (c *client) IssueTx(ctx context.Context, txBytes []byte, options ...rpc.Opt
 	}
 
 	res := &api.JSONTxID{}
-	err = c.requester.SendRequest(ctx, "issueTx", &api.FormattedTx{
+	err = c.requester.SendRequest(ctx, "platform.issueTx", &api.FormattedTx{
 		Tx:       txStr,
 		Encoding: formatting.Hex,
 	}, res, options...)
@@ -658,7 +659,7 @@ func (c *client) IssueTx(ctx context.Context, txBytes []byte, options ...rpc.Opt
 
 func (c *client) GetTx(ctx context.Context, txID ids.ID, options ...rpc.Option) ([]byte, error) {
 	res := &api.FormattedTx{}
-	err := c.requester.SendRequest(ctx, "getTx", &api.GetTxArgs{
+	err := c.requester.SendRequest(ctx, "platform.getTx", &api.GetTxArgs{
 		TxID:     txID,
 		Encoding: formatting.Hex,
 	}, res, options...)
@@ -672,7 +673,7 @@ func (c *client) GetTxStatus(ctx context.Context, txID ids.ID, options ...rpc.Op
 	res := new(GetTxStatusResponse)
 	err := c.requester.SendRequest(
 		ctx,
-		"getTxStatus",
+		"platform.getTxStatus",
 		&GetTxStatusArgs{
 			TxID: txID,
 		},
@@ -703,38 +704,45 @@ func (c *client) AwaitTxDecided(ctx context.Context, txID ids.ID, freq time.Dura
 	}
 }
 
-func (c *client) GetStake(ctx context.Context, addrs []ids.ShortID, options ...rpc.Option) (uint64, [][]byte, error) {
+func (c *client) GetStake(ctx context.Context, addrs []ids.ShortID, options ...rpc.Option) (map[ids.ID]uint64, [][]byte, error) {
 	res := new(GetStakeReply)
-	err := c.requester.SendRequest(ctx, "getStake", &GetStakeArgs{
+	err := c.requester.SendRequest(ctx, "platform.getStake", &GetStakeArgs{
 		JSONAddresses: api.JSONAddresses{
 			Addresses: ids.ShortIDsToStrings(addrs),
 		},
 		Encoding: formatting.Hex,
 	}, res, options...)
 	if err != nil {
-		return 0, nil, err
+		return nil, nil, err
+	}
+
+	staked := make(map[ids.ID]uint64, len(res.Stakeds))
+	for assetID, amount := range res.Stakeds {
+		staked[assetID] = uint64(amount)
 	}
 
 	outputs := make([][]byte, len(res.Outputs))
 	for i, outputStr := range res.Outputs {
 		output, err := formatting.Decode(res.Encoding, outputStr)
 		if err != nil {
-			return 0, nil, err
+			return nil, nil, err
 		}
 		outputs[i] = output
 	}
-	return uint64(res.Staked), outputs, err
+	return staked, outputs, err
 }
 
-func (c *client) GetMinStake(ctx context.Context, options ...rpc.Option) (uint64, uint64, error) {
+func (c *client) GetMinStake(ctx context.Context, subnetID ids.ID, options ...rpc.Option) (uint64, uint64, error) {
 	res := new(GetMinStakeReply)
-	err := c.requester.SendRequest(ctx, "getMinStake", struct{}{}, res, options...)
+	err := c.requester.SendRequest(ctx, "platform.getMinStake", &GetMinStakeArgs{
+		SubnetID: subnetID,
+	}, res, options...)
 	return uint64(res.MinValidatorStake), uint64(res.MinDelegatorStake), err
 }
 
 func (c *client) GetTotalStake(ctx context.Context, subnetID ids.ID, options ...rpc.Option) (uint64, error) {
 	res := new(GetTotalStakeReply)
-	err := c.requester.SendRequest(ctx, "getTotalStake", &GetTotalStakeArgs{
+	err := c.requester.SendRequest(ctx, "platform.getTotalStake", &GetTotalStakeArgs{
 		SubnetID: subnetID,
 	}, res, options...)
 	var amount json.Uint64
@@ -748,7 +756,7 @@ func (c *client) GetTotalStake(ctx context.Context, subnetID ids.ID, options ...
 
 func (c *client) GetMaxStakeAmount(ctx context.Context, subnetID ids.ID, nodeID ids.NodeID, startTime, endTime uint64, options ...rpc.Option) (uint64, error) {
 	res := new(GetMaxStakeAmountReply)
-	err := c.requester.SendRequest(ctx, "getMaxStakeAmount", &GetMaxStakeAmountArgs{
+	err := c.requester.SendRequest(ctx, "platform.getMaxStakeAmount", &GetMaxStakeAmountArgs{
 		SubnetID:  subnetID,
 		NodeID:    nodeID,
 		StartTime: json.Uint64(startTime),
@@ -759,7 +767,7 @@ func (c *client) GetMaxStakeAmount(ctx context.Context, subnetID ids.ID, nodeID 
 
 func (c *client) GetRewardUTXOs(ctx context.Context, args *api.GetTxArgs, options ...rpc.Option) ([][]byte, error) {
 	res := &GetRewardUTXOsReply{}
-	err := c.requester.SendRequest(ctx, "getRewardUTXOs", args, res, options...)
+	err := c.requester.SendRequest(ctx, "platform.getRewardUTXOs", args, res, options...)
 	if err != nil {
 		return nil, err
 	}
@@ -776,13 +784,13 @@ func (c *client) GetRewardUTXOs(ctx context.Context, args *api.GetTxArgs, option
 
 func (c *client) GetTimestamp(ctx context.Context, options ...rpc.Option) (time.Time, error) {
 	res := &GetTimestampReply{}
-	err := c.requester.SendRequest(ctx, "getTimestamp", struct{}{}, res, options...)
+	err := c.requester.SendRequest(ctx, "platform.getTimestamp", struct{}{}, res, options...)
 	return res.Timestamp, err
 }
 
 func (c *client) GetValidatorsAt(ctx context.Context, subnetID ids.ID, height uint64, options ...rpc.Option) (map[ids.NodeID]uint64, error) {
 	res := &GetValidatorsAtReply{}
-	err := c.requester.SendRequest(ctx, "getValidatorsAt", &GetValidatorsAtArgs{
+	err := c.requester.SendRequest(ctx, "platform.getValidatorsAt", &GetValidatorsAtArgs{
 		SubnetID: subnetID,
 		Height:   json.Uint64(height),
 	}, res, options...)
@@ -791,7 +799,7 @@ func (c *client) GetValidatorsAt(ctx context.Context, subnetID ids.ID, height ui
 
 func (c *client) GetBlock(ctx context.Context, blockID ids.ID, options ...rpc.Option) ([]byte, error) {
 	response := &api.FormattedBlock{}
-	if err := c.requester.SendRequest(ctx, "getBlock", &api.GetBlockArgs{
+	if err := c.requester.SendRequest(ctx, "platform.getBlock", &api.GetBlockArgs{
 		BlockID:  blockID,
 		Encoding: formatting.Hex,
 	}, response, options...); err != nil {

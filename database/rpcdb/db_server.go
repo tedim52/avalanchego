@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package rpcdb
@@ -95,8 +95,8 @@ func (db *DatabaseServer) Close(context.Context, *rpcdbpb.CloseRequest) (*rpcdbp
 }
 
 // HealthCheck performs a heath check against the underlying database.
-func (db *DatabaseServer) HealthCheck(context.Context, *emptypb.Empty) (*rpcdbpb.HealthCheckResponse, error) {
-	health, err := db.db.HealthCheck()
+func (db *DatabaseServer) HealthCheck(ctx context.Context, _ *emptypb.Empty) (*rpcdbpb.HealthCheckResponse, error) {
+	health, err := db.db.HealthCheck(ctx)
 	if err != nil {
 		return &rpcdbpb.HealthCheckResponse{}, err
 	}

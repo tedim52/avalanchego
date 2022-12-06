@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package txs
@@ -16,8 +16,8 @@ import (
 var (
 	errNoExportOutputs = errors.New("no export outputs")
 
-	_ UnsignedTx             = &ExportTx{}
-	_ secp256k1fx.UnsignedTx = &ExportTx{}
+	_ UnsignedTx             = (*ExportTx)(nil)
+	_ secp256k1fx.UnsignedTx = (*ExportTx)(nil)
 )
 
 // ExportTx is a transaction that exports an asset to another blockchain.

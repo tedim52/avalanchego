@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package nat
@@ -18,7 +18,7 @@ var (
 	errInvalidLifetime = errors.New("invalid mapping duration range")
 
 	pmpClientTimeout        = 500 * time.Millisecond
-	_                Router = &pmpRouter{}
+	_                Router = (*pmpRouter)(nil)
 )
 
 // pmpRouter adapts the NAT-PMP protocol implementation so it conforms to the
@@ -27,7 +27,7 @@ type pmpRouter struct {
 	client *natpmp.Client
 }
 
-func (r *pmpRouter) SupportsNAT() bool {
+func (*pmpRouter) SupportsNAT() bool {
 	return true
 }
 
@@ -35,7 +35,7 @@ func (r *pmpRouter) MapPort(
 	networkProtocol string,
 	newInternalPort uint16,
 	newExternalPort uint16,
-	mappingName string,
+	_ string,
 	mappingDuration time.Duration,
 ) error {
 	protocol := networkProtocol

@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package txs
@@ -9,7 +9,7 @@ import (
 	"github.com/ava-labs/avalanchego/vms/components/avax"
 )
 
-var _ UnsignedTx = &RewardValidatorTx{}
+var _ UnsignedTx = (*RewardValidatorTx)(nil)
 
 // RewardValidatorTx is a transaction that represents a proposal to
 // remove a validator that is currently validating from the validator set.
@@ -26,7 +26,7 @@ type RewardValidatorTx struct {
 	TxID ids.ID `serialize:"true" json:"txID"`
 
 	// Marks if this validator should be rewarded according to this node.
-	ShouldPreferCommit bool
+	ShouldPreferCommit bool `json:"-"`
 
 	unsignedBytes []byte // Unsigned byte representation of this data
 }
@@ -34,11 +34,24 @@ type RewardValidatorTx struct {
 func (tx *RewardValidatorTx) Initialize(unsignedBytes []byte) {
 	tx.unsignedBytes = unsignedBytes
 }
-func (tx *RewardValidatorTx) InitCtx(*snow.Context)               {}
-func (tx *RewardValidatorTx) Bytes() []byte                       { return tx.unsignedBytes }
-func (tx *RewardValidatorTx) InputIDs() ids.Set                   { return nil }
-func (tx *RewardValidatorTx) Outputs() []*avax.TransferableOutput { return nil }
-func (tx *RewardValidatorTx) SyntacticVerify(*snow.Context) error { return nil }
+
+func (*RewardValidatorTx) InitCtx(*snow.Context) {}
+
+func (tx *RewardValidatorTx) Bytes() []byte {
+	return tx.unsignedBytes
+}
+
+func (*RewardValidatorTx) InputIDs() ids.Set {
+	return nil
+}
+
+func (*RewardValidatorTx) Outputs() []*avax.TransferableOutput {
+	return nil
+}
+
+func (*RewardValidatorTx) SyntacticVerify(*snow.Context) error {
+	return nil
+}
 
 func (tx *RewardValidatorTx) Visit(visitor Visitor) error {
 	return visitor.RewardValidatorTx(tx)

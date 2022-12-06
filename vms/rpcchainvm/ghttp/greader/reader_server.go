@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package greader
@@ -10,7 +10,7 @@ import (
 	readerpb "github.com/ava-labs/avalanchego/proto/pb/io/reader"
 )
 
-var _ readerpb.ReaderServer = &Server{}
+var _ readerpb.ReaderServer = (*Server)(nil)
 
 // Server is an io.Reader that is managed over RPC.
 type Server struct {
@@ -23,7 +23,7 @@ func NewServer(reader io.Reader) *Server {
 	return &Server{reader: reader}
 }
 
-func (s *Server) Read(ctx context.Context, req *readerpb.ReadRequest) (*readerpb.ReadResponse, error) {
+func (s *Server) Read(_ context.Context, req *readerpb.ReadRequest) (*readerpb.ReadResponse, error) {
 	buf := make([]byte, int(req.Length))
 	n, err := s.reader.Read(buf)
 	resp := &readerpb.ReadResponse{

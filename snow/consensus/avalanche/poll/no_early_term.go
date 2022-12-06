@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package poll
@@ -10,15 +10,17 @@ import (
 )
 
 var (
-	_ Factory = &noEarlyTermFactory{}
-	_ Poll    = &noEarlyTermPoll{}
+	_ Factory = (*noEarlyTermFactory)(nil)
+	_ Poll    = (*noEarlyTermPoll)(nil)
 )
 
 type noEarlyTermFactory struct{}
 
 // NewNoEarlyTermFactory returns a factory that returns polls with no early
 // termination
-func NewNoEarlyTermFactory() Factory { return noEarlyTermFactory{} }
+func NewNoEarlyTermFactory() Factory {
+	return noEarlyTermFactory{}
+}
 
 func (noEarlyTermFactory) New(vdrs ids.NodeIDBag) Poll {
 	return &noEarlyTermPoll{polled: vdrs}
@@ -44,10 +46,14 @@ func (p *noEarlyTermPoll) Vote(vdr ids.NodeID, votes []ids.ID) {
 }
 
 // Finished returns true when all validators have voted
-func (p *noEarlyTermPoll) Finished() bool { return p.polled.Len() == 0 }
+func (p *noEarlyTermPoll) Finished() bool {
+	return p.polled.Len() == 0
+}
 
 // Result returns the result of this poll
-func (p *noEarlyTermPoll) Result() ids.UniqueBag { return p.votes }
+func (p *noEarlyTermPoll) Result() ids.UniqueBag {
+	return p.votes
+}
 
 func (p *noEarlyTermPoll) PrefixedString(prefix string) string {
 	return fmt.Sprintf(
@@ -58,4 +64,6 @@ func (p *noEarlyTermPoll) PrefixedString(prefix string) string {
 	)
 }
 
-func (p *noEarlyTermPoll) String() string { return p.PrefixedString("") }
+func (p *noEarlyTermPoll) String() string {
+	return p.PrefixedString("")
+}

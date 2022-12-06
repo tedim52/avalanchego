@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package txs
@@ -41,6 +41,7 @@ type UnsignedTx interface {
 		creationTxFee uint64,
 		numFxs int,
 	) error
+	// Visit calls [visitor] with this transaction's concrete type
 	Visit(visitor Visitor) error
 }
 
@@ -64,10 +65,14 @@ func (t *Tx) Initialize(unsignedBytes, signedBytes []byte) {
 }
 
 // ID returns the unique ID of this tx
-func (t *Tx) ID() ids.ID { return t.id }
+func (t *Tx) ID() ids.ID {
+	return t.id
+}
 
 // Bytes returns the binary representation of this tx
-func (t *Tx) Bytes() []byte { return t.bytes }
+func (t *Tx) Bytes() []byte {
+	return t.bytes
+}
 
 // UTXOs returns the UTXOs transaction is producing.
 func (t *Tx) UTXOs() []*avax.UTXO {

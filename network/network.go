@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package network
@@ -16,6 +16,8 @@ import (
 	gomath "math"
 
 	"github.com/prometheus/client_golang/prometheus"
+
+	"go.uber.org/zap"
 
 	"github.com/ava-labs/avalanchego/api/health"
 	"github.com/ava-labs/avalanchego/ids"
@@ -42,8 +44,8 @@ const (
 )
 
 var (
-	_                      sender.ExternalSender = &network{}
-	_                      Network               = &network{}
+	_                      sender.ExternalSender = (*network)(nil)
+	_                      Network               = (*network)(nil)
 	errNoPrimaryValidators                       = errors.New("no default subnet validators")
 )
 
@@ -197,16 +199,12 @@ func NewNetwork(
 		return nil, fmt.Errorf("initializing network metrics failed with: %w", err)
 	}
 
-	pingMessge, err := msgCreator.Ping()
-	if err != nil {
-		return nil, fmt.Errorf("initializing common ping message failed with: %w", err)
-	}
-
 	peerConfig := &peer.Config{
-		ReadBufferSize:       config.PeerReadBufferSize,
-		WriteBufferSize:      config.PeerWriteBufferSize,
-		Metrics:              peerMetrics,
-		MessageCreator:       msgCreator,
+		ReadBufferSize:  config.PeerReadBufferSize,
+		WriteBufferSize: config.PeerWriteBufferSize,
+		Metrics:         peerMetrics,
+		MessageCreator:  msgCreator,
+
 		Log:                  log,
 		InboundMsgThrottler:  inboundMsgThrottler,
 		Network:              nil, // This is set below.
@@ -219,8 +217,8 @@ func NewNetwork(
 		PongTimeout:          config.PingPongTimeout,
 		MaxClockDifference:   config.MaxClockDifference,
 		ResourceTracker:      config.ResourceTracker,
-		PingMessage:          pingMessge,
 	}
+
 	onCloseCtx, cancel := context.WithCancel(context.Background())
 	n := &network{
 		config:               config,
@@ -277,7 +275,7 @@ func (n *network) Gossip(
 // HealthCheck returns information about several network layer health checks.
 // 1) Information about health check results
 // 2) An error if the health check reports unhealthy
-func (n *network) HealthCheck() (interface{}, error) {
+func (n *network) HealthCheck(context.Context) (interface{}, error) {
 	n.peersLock.RLock()
 	connectedTo := n.connectedPeers.Len()
 	n.peersLock.RUnlock()
@@ -343,8 +341,8 @@ func (n *network) Connected(nodeID ids.NodeID) {
 	peer, ok := n.connectingPeers.GetByID(nodeID)
 	if !ok {
 		n.peerConfig.Log.Error(
-			"unexpectedly connected to %s when not marked as attempting to connect",
-			nodeID,
+			"unexpectedly connected to peer when not marked as attempting to connect",
+			zap.Stringer("nodeID", nodeID),
 		)
 		n.peersLock.Unlock()
 		return
@@ -399,7 +397,10 @@ func (n *network) Track(claimedIPPort ips.ClaimedIPPort) bool {
 	}
 
 	if err := signedIP.Verify(claimedIPPort.Cert); err != nil {
-		n.peerConfig.Log.Debug("signature verification failed for %s: %s", nodeID, err)
+		n.peerConfig.Log.Debug("signature verification failed",
+			zap.Stringer("nodeID", nodeID),
+			zap.Error(err),
+		)
 		return false
 	}
 
@@ -498,17 +499,18 @@ func (n *network) Dispatch() error {
 	go n.inboundConnUpgradeThrottler.Dispatch()
 	errs := wrappers.Errs{}
 	for { // Continuously accept new connections
+		if n.onCloseCtx.Err() != nil {
+			break
+		}
+
 		conn, err := n.listener.Accept() // Returns error when n.Close() is called
 		if err != nil {
-			if netErr, ok := err.(net.Error); ok && netErr.Temporary() {
-				// Sleep for a small amount of time to try to wait for the
-				// temporary error to go away.
-				time.Sleep(time.Millisecond)
-				continue
-			}
-
-			n.peerConfig.Log.Debug("error during server accept: %s", err)
-			break
+			n.peerConfig.Log.Debug("error during server accept", zap.Error(err))
+			// Sleep for a small amount of time to try to wait for the
+			// error to go away.
+			time.Sleep(time.Millisecond)
+			n.metrics.acceptFailed.Inc()
+			continue
 		}
 
 		// We pessimistically drop an incoming connection if the remote
@@ -526,9 +528,9 @@ func (n *network) Dispatch() error {
 		}
 
 		if !n.inboundConnUpgradeThrottler.ShouldUpgrade(ip) {
-			n.peerConfig.Log.Debug(
-				"not upgrading connection to %s due to rate-limiting",
-				ip,
+			n.peerConfig.Log.Debug("failed to upgrade connection",
+				zap.String("reason", "rate-limiting"),
+				zap.Stringer("peerIP", ip),
 			)
 			n.metrics.inboundConnRateLimited.Inc()
 			_ = conn.Close()
@@ -538,7 +540,9 @@ func (n *network) Dispatch() error {
 
 		go func() {
 			if err := n.upgrade(conn, n.serverUpgrader); err != nil {
-				n.peerConfig.Log.Verbo("failed to upgrade inbound connection: %s", err)
+				n.peerConfig.Log.Verbo("failed to upgrade inbound connection",
+					zap.Error(err),
+				)
 			}
 		}()
 	}
@@ -724,9 +728,6 @@ func (n *network) send(msg message.OutboundMessage, peers []peer.Peer) ids.NodeI
 
 	// send to peer and update metrics
 	for _, peer := range peers {
-		// Add a reference to the message so that if it is sent, it won't be
-		// collected until it is done being processed.
-		msg.AddRef()
 		if peer.Send(n.onCloseCtx, msg) {
 			sentTo.Add(peer.ID())
 
@@ -738,10 +739,6 @@ func (n *network) send(msg message.OutboundMessage, peers []peer.Peer) ids.NodeI
 			n.sendFailRateCalculator.Observe(1, now)
 		}
 	}
-
-	// The message has been passed to all peers that it will be sent to, so we
-	// can decrease the sender reference now.
-	msg.DecRef()
 	return sentTo
 }
 
@@ -790,8 +787,10 @@ func (n *network) disconnectedFromConnected(peer peer.Peer, nodeID ids.NodeID) {
 func (n *network) shouldTrack(nodeID ids.NodeID, ip ips.ClaimedIPPort) bool {
 	if !n.config.AllowPrivateIPs && ip.IPPort.IP.IsPrivate() {
 		n.peerConfig.Log.Verbo(
-			"dropping suggested connected to %s because the ip (%s) is private",
-			nodeID, ip.IPPort,
+			"not connecting to suggested peer",
+			zap.String("reason", "peer IP is private"),
+			zap.Stringer("nodeID", nodeID),
+			zap.Stringer("peerIPPort", ip.IPPort),
 		)
 		return false
 	}
@@ -872,7 +871,9 @@ func (n *network) dial(ctx context.Context, nodeID ids.NodeID, ip *trackedIP) {
 			// later duplicated connection check.
 			if connecting || connected {
 				n.peerConfig.Log.Verbo(
-					"exiting attempt to dial %s as we are already connected", nodeID,
+					"exiting attempt to dial peer",
+					zap.String("reason", "already connected"),
+					zap.Stringer("nodeID", nodeID),
 				)
 				return
 			}
@@ -887,9 +888,9 @@ func (n *network) dial(ctx context.Context, nodeID ids.NodeID, ip *trackedIP) {
 			conn, err := n.dialer.Dial(ctx, ip.ip.IP)
 			if err != nil {
 				n.peerConfig.Log.Verbo(
-					"failed to reach %s, attempting again in %s",
-					ip.ip,
-					ip.delay,
+					"failed to reach peer, attempting again",
+					zap.Stringer("peerIP", ip.ip.IP),
+					zap.Duration("delay", ip.delay),
 				)
 				continue
 			}
@@ -897,9 +898,9 @@ func (n *network) dial(ctx context.Context, nodeID ids.NodeID, ip *trackedIP) {
 			err = n.upgrade(conn, n.clientUpgrader)
 			if err != nil {
 				n.peerConfig.Log.Verbo(
-					"failed to upgrade %s, attempting again in %s",
-					ip.ip,
-					ip.delay,
+					"failed to upgrade, attempting again",
+					zap.Stringer("peerIP", ip.ip.IP),
+					zap.Duration("delay", ip.delay),
 				)
 				continue
 			}
@@ -917,31 +918,29 @@ func (n *network) dial(ctx context.Context, nodeID ids.NodeID, ip *trackedIP) {
 // connection will be used to create a new peer. Otherwise the connection will
 // be immediately closed.
 func (n *network) upgrade(conn net.Conn, upgrader peer.Upgrader) error {
-	if conn, ok := conn.(*net.TCPConn); ok {
-		// If a connection is closed, we shouldn't bother keeping any messages
-		// in memory.
-		if err := conn.SetLinger(0); err != nil {
-			n.peerConfig.Log.Warn("failed to set no linger due to: %s", err)
-		}
-	}
-
 	upgradeTimeout := n.peerConfig.Clock.Time().Add(n.config.ReadHandshakeTimeout)
 	if err := conn.SetReadDeadline(upgradeTimeout); err != nil {
 		_ = conn.Close()
-		n.peerConfig.Log.Verbo("failed to set the read deadline with %s", err)
+		n.peerConfig.Log.Verbo("failed to set the read deadline",
+			zap.Error(err),
+		)
 		return err
 	}
 
 	nodeID, tlsConn, cert, err := upgrader.Upgrade(conn)
 	if err != nil {
 		_ = conn.Close()
-		n.peerConfig.Log.Verbo("failed to upgrade connection with %s", err)
+		n.peerConfig.Log.Verbo("failed to upgrade connection",
+			zap.Error(err),
+		)
 		return err
 	}
 
 	if err := tlsConn.SetReadDeadline(time.Time{}); err != nil {
 		_ = tlsConn.Close()
-		n.peerConfig.Log.Verbo("failed to clear the read deadline with %s", err)
+		n.peerConfig.Log.Verbo("failed to clear the read deadline",
+			zap.Error(err),
+		)
 		return err
 	}
 
@@ -957,7 +956,8 @@ func (n *network) upgrade(conn net.Conn, upgrader peer.Upgrader) error {
 	if !n.AllowConnection(nodeID) {
 		_ = tlsConn.Close()
 		n.peerConfig.Log.Verbo(
-			"dropping undesired connection to %s", nodeID,
+			"dropping undesired connection",
+			zap.Stringer("nodeID", nodeID),
 		)
 		return nil
 	}
@@ -968,8 +968,9 @@ func (n *network) upgrade(conn net.Conn, upgrader peer.Upgrader) error {
 	if n.closing {
 		_ = tlsConn.Close()
 		n.peerConfig.Log.Verbo(
-			"dropping connection to %s because we are shutting down the p2p network",
-			nodeID,
+			"dropping connection",
+			zap.String("reason", "shutting down the p2p network"),
+			zap.Stringer("nodeID", nodeID),
 		)
 		return nil
 	}
@@ -977,8 +978,9 @@ func (n *network) upgrade(conn net.Conn, upgrader peer.Upgrader) error {
 	if _, connecting := n.connectingPeers.GetByID(nodeID); connecting {
 		_ = tlsConn.Close()
 		n.peerConfig.Log.Verbo(
-			"dropping duplicate connection to %s because we are already connecting to it",
-			nodeID,
+			"dropping connection",
+			zap.String("reason", "already connecting to peer"),
+			zap.Stringer("nodeID", nodeID),
 		)
 		return nil
 	}
@@ -986,13 +988,16 @@ func (n *network) upgrade(conn net.Conn, upgrader peer.Upgrader) error {
 	if _, connected := n.connectedPeers.GetByID(nodeID); connected {
 		_ = tlsConn.Close()
 		n.peerConfig.Log.Verbo(
-			"dropping duplicate connection to %s because we are already connected to it",
-			nodeID,
+			"dropping connection",
+			zap.String("reason", "already connecting to peer"),
+			zap.Stringer("nodeID", nodeID),
 		)
 		return nil
 	}
 
-	n.peerConfig.Log.Verbo("starting handshake with %s", nodeID)
+	n.peerConfig.Log.Verbo("starting handshake",
+		zap.Stringer("nodeID", nodeID),
+	)
 
 	// peer.Start requires there is only ever one peer instance running with the
 	// same [peerConfig.InboundMsgThrottler]. This is guaranteed by the above
@@ -1028,7 +1033,9 @@ func (n *network) StartClose() {
 		n.peerConfig.Log.Info("shutting down the p2p networking")
 
 		if err := n.listener.Close(); err != nil {
-			n.peerConfig.Log.Debug("closing the network listener failed with: %s", err)
+			n.peerConfig.Log.Debug("closing the network listener",
+				zap.Error(err),
+			)
 		}
 
 		n.peersLock.Lock()
@@ -1123,9 +1130,9 @@ func (n *network) runTimers() {
 			msg, err := n.peerConfig.MessageCreator.PeerList(validatorIPs, false)
 			if err != nil {
 				n.peerConfig.Log.Error(
-					"failed to gossip %d ips: %s",
-					len(validatorIPs),
-					err,
+					"failed to gossip",
+					zap.Int("peerListLen", len(validatorIPs)),
+					zap.Error(err),
 				)
 				continue
 			}

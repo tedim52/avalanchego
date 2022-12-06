@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package ipcs
@@ -15,7 +15,7 @@ import (
 	"github.com/ava-labs/avalanchego/utils/wrappers"
 )
 
-var _ snow.Acceptor = &EventSockets{}
+var _ snow.Acceptor = (*EventSockets)(nil)
 
 // EventSockets is a set of named eventSockets
 type EventSockets struct {

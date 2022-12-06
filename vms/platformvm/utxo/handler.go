@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package utxo
@@ -6,6 +6,8 @@ package utxo
 import (
 	"errors"
 	"fmt"
+
+	"go.uber.org/zap"
 
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/snow"
@@ -23,7 +25,7 @@ import (
 )
 
 var (
-	_ Handler = &handler{}
+	_ Handler = (*handler)(nil)
 
 	errCantSign                     = errors.New("can't sign")
 	errLockedFundsNotMarkedAsLocked = errors.New("locked funds not marked as locked")
@@ -41,7 +43,6 @@ func Consume(utxoDB state.UTXODeleter, ins []*avax.TransferableInput) {
 func Produce(
 	utxoDB state.UTXOAdder,
 	txID ids.ID,
-	assetID ids.ID,
 	outs []*avax.TransferableOutput,
 ) {
 	for index, out := range outs {
@@ -50,7 +51,7 @@ func Produce(
 				TxID:        txID,
 				OutputIndex: uint32(index),
 			},
-			Asset: avax.Asset{ID: assetID},
+			Asset: out.Asset,
 			Out:   out.Output(),
 		})
 	}
@@ -102,34 +103,40 @@ type Verifier interface {
 	// Verify that [tx] is semantically valid.
 	// [ins] and [outs] are the inputs and outputs of [tx].
 	// [creds] are the credentials of [tx], which allow [ins] to be spent.
-	// The [ins] must have at least [feeAmount] more of [feeAssetID] than the
-	// [outs].
+	// [unlockedProduced] is the map of assets that were produced and their
+	// amounts.
+	// The [ins] must have at least [unlockedProduced] than the [outs].
+	//
 	// Precondition: [tx] has already been syntactically verified.
+	//
+	// Note: [unlockedProduced] is modified by this method.
 	VerifySpend(
 		tx txs.UnsignedTx,
 		utxoDB state.UTXOGetter,
 		ins []*avax.TransferableInput,
 		outs []*avax.TransferableOutput,
 		creds []verify.Verifiable,
-		feeAmount uint64,
-		feeAssetID ids.ID,
+		unlockedProduced map[ids.ID]uint64,
 	) error
 
 	// Verify that [tx] is semantically valid.
 	// [utxos[i]] is the UTXO being consumed by [ins[i]].
 	// [ins] and [outs] are the inputs and outputs of [tx].
 	// [creds] are the credentials of [tx], which allow [ins] to be spent.
-	// The [ins] must have at least [feeAmount] more of [feeAssetID] than the
-	// [outs].
+	// [unlockedProduced] is the map of assets that were produced and their
+	// amounts.
+	// The [ins] must have at least [unlockedProduced] more than the [outs].
+	//
 	// Precondition: [tx] has already been syntactically verified.
+	//
+	// Note: [unlockedProduced] is modified by this method.
 	VerifySpendUTXOs(
 		tx txs.UnsignedTx,
 		utxos []*avax.UTXO,
 		ins []*avax.TransferableInput,
 		outs []*avax.TransferableOutput,
 		creds []verify.Verifiable,
-		feeAmount uint64,
-		feeAssetID ids.ID,
+		unlockedProduced map[ids.ID]uint64,
 	) error
 }
 
@@ -230,7 +237,10 @@ func (h *handler) Spend(
 		}
 		in, ok := inIntf.(avax.TransferableIn)
 		if !ok { // should never happen
-			h.ctx.Log.Warn("expected input to be avax.TransferableIn but is %T", inIntf)
+			h.ctx.Log.Warn("wrong input type",
+				zap.String("expectedType", "avax.TransferableIn"),
+				zap.String("actualType", fmt.Sprintf("%T", inIntf)),
+			)
 			continue
 		}
 
@@ -238,7 +248,7 @@ func (h *handler) Spend(
 		remainingValue := in.Amount()
 
 		// Stake any value that should be staked
-		amountToStake := math.Min64(
+		amountToStake := math.Min(
 			amount-amountStaked, // Amount we still need to stake
 			remainingValue,      // Amount available to stake
 		)
@@ -290,9 +300,9 @@ func (h *handler) Spend(
 	amountBurned := uint64(0)
 
 	for _, utxo := range utxos {
-		// If we have consumed more AVAX than we are trying to stake, and we
-		// have burned more AVAX then we need to, then we have no need to
-		// consume more AVAX
+		// If we have consumed more AVAX than we are trying to stake,
+		// and we have burned more AVAX than we need to,
+		// then we have no need to consume more AVAX
 		if amountBurned >= fee && amountStaked >= amount {
 			break
 		}
@@ -329,7 +339,7 @@ func (h *handler) Spend(
 		remainingValue := in.Amount()
 
 		// Burn any value that should be burned
-		amountToBurn := math.Min64(
+		amountToBurn := math.Min(
 			fee-amountBurned, // Amount we still need to burn
 			remainingValue,   // Amount available to burn
 		)
@@ -337,7 +347,7 @@ func (h *handler) Spend(
 		remainingValue -= amountToBurn
 
 		// Stake any value that should be staked
-		amountToStake := math.Min64(
+		amountToStake := math.Min(
 			amount-amountStaked, // Amount we still need to stake
 			remainingValue,      // Amount available to stake
 		)
@@ -447,8 +457,7 @@ func (h *handler) VerifySpend(
 	ins []*avax.TransferableInput,
 	outs []*avax.TransferableOutput,
 	creds []verify.Verifiable,
-	feeAmount uint64,
-	feeAssetID ids.ID,
+	unlockedProduced map[ids.ID]uint64,
 ) error {
 	utxos := make([]*avax.UTXO, len(ins))
 	for index, input := range ins {
@@ -463,7 +472,7 @@ func (h *handler) VerifySpend(
 		utxos[index] = utxo
 	}
 
-	return h.VerifySpendUTXOs(tx, utxos, ins, outs, creds, feeAmount, feeAssetID)
+	return h.VerifySpendUTXOs(tx, utxos, ins, outs, creds, unlockedProduced)
 }
 
 func (h *handler) VerifySpendUTXOs(
@@ -472,8 +481,7 @@ func (h *handler) VerifySpendUTXOs(
 	ins []*avax.TransferableInput,
 	outs []*avax.TransferableOutput,
 	creds []verify.Verifiable,
-	feeAmount uint64,
-	feeAssetID ids.ID,
+	unlockedProduced map[ids.ID]uint64,
 ) error {
 	if len(ins) != len(creds) {
 		return fmt.Errorf(
@@ -499,22 +507,26 @@ func (h *handler) VerifySpendUTXOs(
 	now := uint64(h.clk.Time().Unix())
 
 	// Track the amount of unlocked transfers
-	unlockedProduced := feeAmount
-	unlockedConsumed := uint64(0)
+	// assetID -> amount
+	unlockedConsumed := make(map[ids.ID]uint64)
 
 	// Track the amount of locked transfers and their owners
-	// locktime -> ownerID -> amount
-	lockedProduced := make(map[uint64]map[ids.ID]uint64)
-	lockedConsumed := make(map[uint64]map[ids.ID]uint64)
+	// assetID -> locktime -> ownerID -> amount
+	lockedProduced := make(map[ids.ID]map[uint64]map[ids.ID]uint64)
+	lockedConsumed := make(map[ids.ID]map[uint64]map[ids.ID]uint64)
 
 	for index, input := range ins {
 		utxo := utxos[index] // The UTXO consumed by [input]
 
-		if assetID := utxo.AssetID(); assetID != feeAssetID {
-			return fmt.Errorf("utxo asset ID %s doesn't match the fee asset ID %s", assetID, feeAssetID)
-		}
-		if assetID := input.AssetID(); assetID != feeAssetID {
-			return fmt.Errorf("input asset ID %s doesn't match the fee asset ID %s", assetID, feeAssetID)
+		realAssetID := utxo.AssetID()
+		claimedAssetID := input.AssetID()
+		if realAssetID != claimedAssetID {
+			return fmt.Errorf(
+				"input %d has asset ID %s but UTXO has asset ID %s",
+				index,
+				claimedAssetID,
+				realAssetID,
+			)
 		}
 
 		out := utxo.Out
@@ -547,11 +559,11 @@ func (h *handler) VerifySpendUTXOs(
 		amount := in.Amount()
 
 		if now >= locktime {
-			newUnlockedConsumed, err := math.Add64(unlockedConsumed, amount)
+			newUnlockedConsumed, err := math.Add64(unlockedConsumed[realAssetID], amount)
 			if err != nil {
 				return err
 			}
-			unlockedConsumed = newUnlockedConsumed
+			unlockedConsumed[realAssetID] = newUnlockedConsumed
 			continue
 		}
 
@@ -564,11 +576,16 @@ func (h *handler) VerifySpendUTXOs(
 		if err != nil {
 			return fmt.Errorf("couldn't marshal owner: %w", err)
 		}
+		lockedConsumedAsset, ok := lockedConsumed[realAssetID]
+		if !ok {
+			lockedConsumedAsset = make(map[uint64]map[ids.ID]uint64)
+			lockedConsumed[realAssetID] = lockedConsumedAsset
+		}
 		ownerID := hashing.ComputeHash256Array(ownerBytes)
-		owners, ok := lockedConsumed[locktime]
+		owners, ok := lockedConsumedAsset[locktime]
 		if !ok {
 			owners = make(map[ids.ID]uint64)
-			lockedConsumed[locktime] = owners
+			lockedConsumedAsset[locktime] = owners
 		}
 		newAmount, err := math.Add64(owners[ownerID], amount)
 		if err != nil {
@@ -578,9 +595,7 @@ func (h *handler) VerifySpendUTXOs(
 	}
 
 	for _, out := range outs {
-		if assetID := out.AssetID(); assetID != feeAssetID {
-			return fmt.Errorf("output asset ID %s don't match the fee asset ID %s", assetID, feeAssetID)
-		}
+		assetID := out.AssetID()
 
 		output := out.Output()
 		locktime := uint64(0)
@@ -593,11 +608,11 @@ func (h *handler) VerifySpendUTXOs(
 		amount := output.Amount()
 
 		if locktime == 0 {
-			newUnlockedProduced, err := math.Add64(unlockedProduced, amount)
+			newUnlockedProduced, err := math.Add64(unlockedProduced[assetID], amount)
 			if err != nil {
 				return err
 			}
-			unlockedProduced = newUnlockedProduced
+			unlockedProduced[assetID] = newUnlockedProduced
 			continue
 		}
 
@@ -610,11 +625,16 @@ func (h *handler) VerifySpendUTXOs(
 		if err != nil {
 			return fmt.Errorf("couldn't marshal owner: %w", err)
 		}
+		lockedProducedAsset, ok := lockedProduced[assetID]
+		if !ok {
+			lockedProducedAsset = make(map[uint64]map[ids.ID]uint64)
+			lockedProduced[assetID] = lockedProducedAsset
+		}
 		ownerID := hashing.ComputeHash256Array(ownerBytes)
-		owners, ok := lockedProduced[locktime]
+		owners, ok := lockedProducedAsset[locktime]
 		if !ok {
 			owners = make(map[ids.ID]uint64)
-			lockedProduced[locktime] = owners
+			lockedProducedAsset[locktime] = owners
 		}
 		newAmount, err := math.Add64(owners[ownerID], amount)
 		if err != nil {
@@ -623,35 +643,43 @@ func (h *handler) VerifySpendUTXOs(
 		owners[ownerID] = newAmount
 	}
 
-	// Make sure that for each locktime, tokens produced <= tokens consumed
-	for locktime, producedAmounts := range lockedProduced {
-		consumedAmounts := lockedConsumed[locktime]
-		for ownerID, producedAmount := range producedAmounts {
-			consumedAmount := consumedAmounts[ownerID]
+	// Make sure that for each assetID and locktime, tokens produced <= tokens consumed
+	for assetID, producedAssetAmounts := range lockedProduced {
+		lockedConsumedAsset := lockedConsumed[assetID]
+		for locktime, producedAmounts := range producedAssetAmounts {
+			consumedAmounts := lockedConsumedAsset[locktime]
+			for ownerID, producedAmount := range producedAmounts {
+				consumedAmount := consumedAmounts[ownerID]
 
-			if producedAmount > consumedAmount {
-				increase := producedAmount - consumedAmount
-				if increase > unlockedConsumed {
-					return fmt.Errorf(
-						"address %s produces %d unlocked and consumes %d unlocked for locktime %d",
-						ownerID,
-						increase,
-						unlockedConsumed,
-						locktime,
-					)
+				if producedAmount > consumedAmount {
+					increase := producedAmount - consumedAmount
+					unlockedConsumedAsset := unlockedConsumed[assetID]
+					if increase > unlockedConsumedAsset {
+						return fmt.Errorf(
+							"address %s produces %d unlocked and consumes %d unlocked for locktime %d",
+							ownerID,
+							increase,
+							unlockedConsumedAsset,
+							locktime,
+						)
+					}
+					unlockedConsumed[assetID] = unlockedConsumedAsset - increase
 				}
-				unlockedConsumed -= increase
 			}
 		}
 	}
 
-	// More unlocked tokens produced than consumed. Invalid.
-	if unlockedProduced > unlockedConsumed {
-		return fmt.Errorf(
-			"tx produces more unlocked (%d) than it consumes (%d)",
-			unlockedProduced,
-			unlockedConsumed,
-		)
+	for assetID, unlockedProducedAsset := range unlockedProduced {
+		unlockedConsumedAsset := unlockedConsumed[assetID]
+		// More unlocked tokens produced than consumed. Invalid.
+		if unlockedProducedAsset > unlockedConsumedAsset {
+			return fmt.Errorf(
+				"tx produces more unlocked %q (%d) than it consumes (%d)",
+				assetID,
+				unlockedProducedAsset,
+				unlockedConsumedAsset,
+			)
+		}
 	}
 	return nil
 }

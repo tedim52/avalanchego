@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package peer
@@ -13,7 +13,7 @@ import (
 	"github.com/ava-labs/avalanchego/version"
 )
 
-var _ Network = &testNetwork{}
+var _ Network = (*testNetwork)(nil)
 
 // testNetwork is a network definition for a TestPeer
 type testNetwork struct {
@@ -49,13 +49,17 @@ func NewTestNetwork(
 	}
 }
 
-func (n *testNetwork) Connected(ids.NodeID) {}
+func (*testNetwork) Connected(ids.NodeID) {}
 
-func (n *testNetwork) AllowConnection(ids.NodeID) bool { return true }
+func (*testNetwork) AllowConnection(ids.NodeID) bool {
+	return true
+}
 
-func (n *testNetwork) Track(ips.ClaimedIPPort) bool { return true }
+func (*testNetwork) Track(ips.ClaimedIPPort) bool {
+	return true
+}
 
-func (n *testNetwork) Disconnected(ids.NodeID) {}
+func (*testNetwork) Disconnected(ids.NodeID) {}
 
 func (n *testNetwork) Version() (message.OutboundMessage, error) {
 	now := uint64(time.Now().Unix())

@@ -1,9 +1,10 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package snowman
 
 import (
+	"context"
 	"math/rand"
 
 	"github.com/ava-labs/avalanchego/ids"
@@ -58,7 +59,7 @@ func (n *Network) Initialize(params snowball.Parameters, numColors int) {
 }
 
 func (n *Network) AddNode(sm Consensus) error {
-	if err := sm.Initialize(snow.DefaultConsensusContextTest(), n.params, Genesis.ID(), Genesis.Height()); err != nil {
+	if err := sm.Initialize(snow.DefaultConsensusContextTest(), n.params, Genesis.ID(), Genesis.Height(), Genesis.Timestamp()); err != nil {
 		return err
 	}
 
@@ -76,10 +77,10 @@ func (n *Network) AddNode(sm Consensus) error {
 			},
 			ParentV: myDep,
 			HeightV: blk.Height(),
-			VerifyV: blk.Verify(),
+			VerifyV: blk.Verify(context.Background()),
 			BytesV:  blk.Bytes(),
 		}
-		if err := sm.Add(myVtx); err != nil {
+		if err := sm.Add(context.Background(), myVtx); err != nil {
 			return err
 		}
 		deps[myVtx.ID()] = myDep
@@ -89,7 +90,9 @@ func (n *Network) AddNode(sm Consensus) error {
 	return nil
 }
 
-func (n *Network) Finalized() bool { return len(n.running) == 0 }
+func (n *Network) Finalized() bool {
+	return len(n.running) == 0
+}
 
 func (n *Network) Round() error {
 	if len(n.running) == 0 {
@@ -108,7 +111,7 @@ func (n *Network) Round() error {
 		sampledColors.Add(peer.Preference())
 	}
 
-	if err := running.RecordPoll(sampledColors); err != nil {
+	if err := running.RecordPoll(context.Background(), sampledColors); err != nil {
 		return err
 	}
 

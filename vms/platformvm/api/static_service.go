@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package api
@@ -17,6 +17,7 @@ import (
 	"github.com/ava-labs/avalanchego/utils/math"
 	"github.com/ava-labs/avalanchego/vms/components/avax"
 	"github.com/ava-labs/avalanchego/vms/platformvm/genesis"
+	"github.com/ava-labs/avalanchego/vms/platformvm/signer"
 	"github.com/ava-labs/avalanchego/vms/platformvm/stakeable"
 	"github.com/ava-labs/avalanchego/vms/platformvm/txs"
 	"github.com/ava-labs/avalanchego/vms/platformvm/txs/txheap"
@@ -47,7 +48,8 @@ type UTXO struct {
 	Message  string      `json:"message"`
 }
 
-// TODO: refactor APIStaker, APIValidators and merge them together for SubnetValidators + PrimaryValidators
+// TODO: Refactor APIStaker, APIValidators and merge them together for
+//       PermissionedValidators + PermissionlessValidators.
 
 // APIStaker is the representation of a staker sent via APIs.
 // [TxID] is the txID of the transaction that added this staker.
@@ -71,23 +73,31 @@ type Owner struct {
 	Addresses []string    `json:"addresses"`
 }
 
-// PrimaryValidator is the repr. of a primary network validator sent over APIs.
-type PrimaryValidator struct {
+// PermissionlessValidator is the repr. of a permissionless validator sent over
+// APIs.
+type PermissionlessValidator struct {
 	Staker
-	// The owner the staking reward, if applicable, will go to
-	RewardOwner        *Owner        `json:"rewardOwner,omitempty"`
-	PotentialReward    *json.Uint64  `json:"potentialReward,omitempty"`
-	DelegationFee      json.Float32  `json:"delegationFee"`
-	ExactDelegationFee *json.Uint32  `json:"exactDelegationFee,omitempty"`
-	Uptime             *json.Float32 `json:"uptime,omitempty"`
-	Connected          bool          `json:"connected"`
-	Staked             []UTXO        `json:"staked,omitempty"`
+	// Deprecated: RewardOwner has been replaced by ValidationRewardOwner and
+	//             DelegationRewardOwner.
+	RewardOwner *Owner `json:"rewardOwner,omitempty"`
+	// The owner of the rewards from the validation period, if applicable.
+	ValidationRewardOwner *Owner `json:"validationRewardOwner,omitempty"`
+	// The owner of the rewards from delegations during the validation period,
+	// if applicable.
+	DelegationRewardOwner *Owner                    `json:"delegationRewardOwner,omitempty"`
+	PotentialReward       *json.Uint64              `json:"potentialReward,omitempty"`
+	DelegationFee         json.Float32              `json:"delegationFee"`
+	ExactDelegationFee    *json.Uint32              `json:"exactDelegationFee,omitempty"`
+	Uptime                *json.Float32             `json:"uptime,omitempty"`
+	Connected             bool                      `json:"connected"`
+	Staked                []UTXO                    `json:"staked,omitempty"`
+	Signer                *signer.ProofOfPossession `json:"signer,omitempty"`
 	// The delegators delegating to this validator
 	Delegators []PrimaryDelegator `json:"delegators"`
 }
 
-// APISubnetValidator is the repr. of a subnet validator sent over APIs.
-type SubnetValidator struct {
+// PermissionedValidator is the repr. of a permissioned validator sent over APIs.
+type PermissionedValidator struct {
 	Staker
 	// The owner the staking reward, if applicable, will go to
 	Connected bool `json:"connected"`
@@ -134,15 +144,15 @@ type Chain struct {
 // [Chains] are the chains that exist at genesis.
 // [Time] is the Platform Chain's time at network genesis.
 type BuildGenesisArgs struct {
-	AvaxAssetID   ids.ID              `json:"avaxAssetID"`
-	NetworkID     json.Uint32         `json:"networkID"`
-	UTXOs         []UTXO              `json:"utxos"`
-	Validators    []PrimaryValidator  `json:"validators"`
-	Chains        []Chain             `json:"chains"`
-	Time          json.Uint64         `json:"time"`
-	InitialSupply json.Uint64         `json:"initialSupply"`
-	Message       string              `json:"message"`
-	Encoding      formatting.Encoding `json:"encoding"`
+	AvaxAssetID   ids.ID                    `json:"avaxAssetID"`
+	NetworkID     json.Uint32               `json:"networkID"`
+	UTXOs         []UTXO                    `json:"utxos"`
+	Validators    []PermissionlessValidator `json:"validators"`
+	Chains        []Chain                   `json:"chains"`
+	Time          json.Uint64               `json:"time"`
+	InitialSupply json.Uint64               `json:"initialSupply"`
+	Message       string                    `json:"message"`
+	Encoding      formatting.Encoding       `json:"encoding"`
 }
 
 // BuildGenesisReply is the reply from BuildGenesis
@@ -161,7 +171,7 @@ func bech32ToID(addrStr string) (ids.ShortID, error) {
 }
 
 // BuildGenesis build the genesis state of the Platform Chain (and thereby the Avalanche network.)
-func (ss *StaticService) BuildGenesis(_ *http.Request, args *BuildGenesisArgs, reply *BuildGenesisReply) error {
+func (*StaticService) BuildGenesis(_ *http.Request, args *BuildGenesisArgs, reply *BuildGenesisReply) error {
 	// Specify the UTXOs on the Platform chain that exist at genesis.
 	utxos := make([]*genesis.UTXO, 0, len(args.UTXOs))
 	for i, apiUTXO := range args.UTXOs {
@@ -278,11 +288,11 @@ func (ss *StaticService) BuildGenesis(_ *http.Request, args *BuildGenesisArgs, r
 				End:    uint64(vdr.EndTime),
 				Wght:   weight,
 			},
-			Stake:        stake,
-			RewardsOwner: owner,
-			Shares:       delegationFee,
+			StakeOuts:        stake,
+			RewardsOwner:     owner,
+			DelegationShares: delegationFee,
 		}}
-		if err := tx.Sign(genesis.Codec, nil); err != nil {
+		if err := tx.Sign(txs.GenesisCodec, nil); err != nil {
 			return err
 		}
 
@@ -308,7 +318,7 @@ func (ss *StaticService) BuildGenesis(_ *http.Request, args *BuildGenesisArgs, r
 			GenesisData: genesisBytes,
 			SubnetAuth:  &secp256k1fx.Input{},
 		}}
-		if err := tx.Sign(genesis.Codec, nil); err != nil {
+		if err := tx.Sign(txs.GenesisCodec, nil); err != nil {
 			return err
 		}
 
@@ -328,7 +338,7 @@ func (ss *StaticService) BuildGenesis(_ *http.Request, args *BuildGenesisArgs, r
 	}
 
 	// Marshal genesis to bytes
-	bytes, err := genesis.Codec.Marshal(txs.Version, g)
+	bytes, err := genesis.Codec.Marshal(genesis.Version, g)
 	if err != nil {
 		return fmt.Errorf("couldn't marshal genesis: %w", err)
 	}
@@ -368,7 +378,14 @@ func (s innerSortUTXO) Less(i, j int) bool {
 	return bytes.Compare(iAddrID.Bytes(), jAddrID.Bytes()) == -1
 }
 
-func (s innerSortUTXO) Len() int      { return len(s) }
-func (s innerSortUTXO) Swap(i, j int) { s[j], s[i] = s[i], s[j] }
+func (s innerSortUTXO) Len() int {
+	return len(s)
+}
 
-func sortUTXOs(utxos []UTXO) { sort.Sort(innerSortUTXO(utxos)) }
+func (s innerSortUTXO) Swap(i, j int) {
+	s[j], s[i] = s[i], s[j]
+}
+
+func sortUTXOs(utxos []UTXO) {
+	sort.Sort(innerSortUTXO(utxos))
+}

@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package gsharedmemory
@@ -14,7 +14,7 @@ import (
 	sharedmemorypb "github.com/ava-labs/avalanchego/proto/pb/sharedmemory"
 )
 
-var _ sharedmemorypb.SharedMemoryServer = &Server{}
+var _ sharedmemorypb.SharedMemoryServer = (*Server)(nil)
 
 // Server is shared memory that is managed over RPC.
 type Server struct {
@@ -222,7 +222,7 @@ func (s *Server) Apply(
 		}
 	}
 
-	if err := s.parseRequests(apply.requests, req.Requests); err != nil {
+	if err := parseRequests(apply.requests, req.Requests); err != nil {
 		delete(s.apply, req.Id)
 		return nil, err
 	}
@@ -249,7 +249,7 @@ func (s *Server) Apply(
 	return &sharedmemorypb.ApplyResponse{}, s.sm.Apply(apply.requests, batches...)
 }
 
-func (s *Server) parseRequests(
+func parseRequests(
 	requests map[ids.ID]*atomic.Requests,
 	rawRequests []*sharedmemorypb.AtomicRequest,
 ) error {

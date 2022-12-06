@@ -4,6 +4,7 @@ name: build-macos-release
 
 # Controls when the action will run.
 on:
+  workflow_dispatch:
   push:
     tags:
       - "*" # Push events to every tag
@@ -13,15 +14,16 @@ jobs:
   # This workflow contains a single job called "build"
   build-mac:
     # The type of runner that the job will run on
-    runs-on: macos-11
+    runs-on: macos-12
 
     # Steps represent a sequence of tasks that will be executed as part of the job
     steps:
       # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
       - uses: actions/checkout@v3
-      - uses: actions/setup-go@v2
+      - uses: actions/setup-go@v3
         with:
-          go-version: "1.17.9" # The Go version to download (if necessary) and use.
+          go-version: '1.19'
+          check-latest: true
       - run: go version
 
       # Runs a single command using the runners shell
@@ -30,7 +32,8 @@ jobs:
 
       - name: Get the version
         id: get_version
-        run: echo ::set-output name=VERSION::${GITHUB_REF/refs\/tags\//}
+        run: |
+          echo "VERSION=${GITHUB_REF/refs\/tags\//}" >> $GITHUB_ENV
         shell: bash
 
       - name: Install aws cli
@@ -41,7 +44,7 @@ jobs:
       - name: Create zip file
         run: 7z a avalanchego-macos-${VERSION}.zip build/avalanchego build/plugins
         env:
-          VERSION: ${{ steps.get_version.outputs.VERSION }}
+          VERSION: ${{ env.VERSION }}
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v1
@@ -54,4 +57,4 @@ jobs:
         run: aws s3 cp avalanchego-macos-${VERSION}.zip s3://${BUCKET}/macos/
         env:
           BUCKET: ${{ secrets.BUCKET }}
-          VERSION: ${{ steps.get_version.outputs.VERSION }}
+          VERSION: ${{ env.VERSION }}

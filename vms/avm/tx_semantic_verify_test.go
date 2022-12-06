@@ -1,11 +1,13 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package avm
 
 import (
+	"context"
 	"math"
 	"testing"
+	"time"
 
 	"github.com/ava-labs/avalanchego/api/keystore"
 	"github.com/ava-labs/avalanchego/chains/atomic"
@@ -14,6 +16,7 @@ import (
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/snow"
 	"github.com/ava-labs/avalanchego/snow/engine/common"
+	"github.com/ava-labs/avalanchego/utils/constants"
 	"github.com/ava-labs/avalanchego/utils/crypto"
 	"github.com/ava-labs/avalanchego/version"
 	"github.com/ava-labs/avalanchego/vms/avm/fxs"
@@ -26,7 +29,7 @@ func TestBaseTxSemanticVerify(t *testing.T) {
 	genesisBytes, _, vm, _ := GenesisVM(t)
 	ctx := vm.ctx
 	defer func() {
-		if err := vm.Shutdown(); err != nil {
+		if err := vm.Shutdown(context.Background()); err != nil {
 			t.Fatal(err)
 		}
 		ctx.Lock.Unlock()
@@ -84,7 +87,7 @@ func TestBaseTxSemanticVerifyUnknownFx(t *testing.T) {
 	)
 	ctx := vm.ctx
 	defer func() {
-		if err := vm.Shutdown(); err != nil {
+		if err := vm.Shutdown(context.Background()); err != nil {
 			t.Fatal(err)
 		}
 		ctx.Lock.Unlock()
@@ -137,7 +140,7 @@ func TestBaseTxSemanticVerifyWrongAssetID(t *testing.T) {
 	genesisBytes, _, vm, _ := GenesisVM(t)
 	ctx := vm.ctx
 	defer func() {
-		if err := vm.Shutdown(); err != nil {
+		if err := vm.Shutdown(context.Background()); err != nil {
 			t.Fatal(err)
 		}
 		ctx.Lock.Unlock()
@@ -184,7 +187,7 @@ func TestBaseTxSemanticVerifyUnauthorizedFx(t *testing.T) {
 	vm := &VM{}
 	ctx.Lock.Lock()
 	defer func() {
-		if err := vm.Shutdown(); err != nil {
+		if err := vm.Shutdown(context.Background()); err != nil {
 			t.Fatal(err)
 		}
 		ctx.Lock.Unlock()
@@ -199,6 +202,7 @@ func TestBaseTxSemanticVerifyUnauthorizedFx(t *testing.T) {
 	genesisBytes := BuildGenesisTest(t)
 	issuer := make(chan common.Message, 1)
 	err := vm.Initialize(
+		context.Background(),
 		ctx,
 		manager.NewMemDB(version.Semantic1_0_0),
 		genesisBytes,
@@ -222,11 +226,11 @@ func TestBaseTxSemanticVerifyUnauthorizedFx(t *testing.T) {
 	}
 	vm.batchTimeout = 0
 
-	if err = vm.SetState(snow.Bootstrapping); err != nil {
+	if err = vm.SetState(context.Background(), snow.Bootstrapping); err != nil {
 		t.Fatal(err)
 	}
 
-	err = vm.SetState(snow.NormalOp)
+	err = vm.SetState(context.Background(), snow.NormalOp)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -264,7 +268,7 @@ func TestBaseTxSemanticVerifyInvalidSignature(t *testing.T) {
 	genesisBytes, _, vm, _ := GenesisVM(t)
 	ctx := vm.ctx
 	defer func() {
-		if err := vm.Shutdown(); err != nil {
+		if err := vm.Shutdown(context.Background()); err != nil {
 			t.Fatal(err)
 		}
 		ctx.Lock.Unlock()
@@ -321,7 +325,7 @@ func TestBaseTxSemanticVerifyMissingUTXO(t *testing.T) {
 	genesisBytes, _, vm, _ := GenesisVM(t)
 	ctx := vm.ctx
 	defer func() {
-		if err := vm.Shutdown(); err != nil {
+		if err := vm.Shutdown(context.Background()); err != nil {
 			t.Fatal(err)
 		}
 		ctx.Lock.Unlock()
@@ -367,7 +371,7 @@ func TestBaseTxSemanticVerifyInvalidUTXO(t *testing.T) {
 	genesisBytes, _, vm, _ := GenesisVM(t)
 	ctx := vm.ctx
 	defer func() {
-		if err := vm.Shutdown(); err != nil {
+		if err := vm.Shutdown(context.Background()); err != nil {
 			t.Fatal(err)
 		}
 		ctx.Lock.Unlock()
@@ -462,13 +466,13 @@ func TestBaseTxSemanticVerifyPendingInvalidUTXO(t *testing.T) {
 
 	ctx.Lock.Lock()
 	defer func() {
-		if err := vm.Shutdown(); err != nil {
+		if err := vm.Shutdown(context.Background()); err != nil {
 			t.Fatal(err)
 		}
 		ctx.Lock.Unlock()
 	}()
 
-	vm.PendingTxs()
+	_ = vm.PendingTxs(context.Background())
 
 	tx := &txs.Tx{Unsigned: &txs.BaseTx{
 		BaseTx: avax.BaseTx{
@@ -557,13 +561,13 @@ func TestBaseTxSemanticVerifyPendingWrongAssetID(t *testing.T) {
 
 	ctx.Lock.Lock()
 	defer func() {
-		if err := vm.Shutdown(); err != nil {
+		if err := vm.Shutdown(context.Background()); err != nil {
 			t.Fatal(err)
 		}
 		ctx.Lock.Unlock()
 	}()
 
-	vm.PendingTxs()
+	_ = vm.PendingTxs(context.Background())
 
 	tx := &txs.Tx{Unsigned: &txs.BaseTx{
 		BaseTx: avax.BaseTx{
@@ -617,6 +621,7 @@ func TestBaseTxSemanticVerifyPendingUnauthorizedFx(t *testing.T) {
 	}
 
 	err := vm.Initialize(
+		context.Background(),
 		ctx,
 		manager.NewMemDB(version.Semantic1_0_0),
 		genesisBytes,
@@ -640,11 +645,11 @@ func TestBaseTxSemanticVerifyPendingUnauthorizedFx(t *testing.T) {
 	}
 	vm.batchTimeout = 0
 
-	if err = vm.SetState(snow.Bootstrapping); err != nil {
+	if err = vm.SetState(context.Background(), snow.Bootstrapping); err != nil {
 		t.Fatal(err)
 	}
 
-	err = vm.SetState(snow.NormalOp)
+	err = vm.SetState(context.Background(), snow.NormalOp)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -698,13 +703,13 @@ func TestBaseTxSemanticVerifyPendingUnauthorizedFx(t *testing.T) {
 
 	ctx.Lock.Lock()
 	defer func() {
-		if err := vm.Shutdown(); err != nil {
+		if err := vm.Shutdown(context.Background()); err != nil {
 			t.Fatal(err)
 		}
 		ctx.Lock.Unlock()
 	}()
 
-	vm.PendingTxs()
+	_ = vm.PendingTxs(context.Background())
 
 	tx := &txs.Tx{
 		Unsigned: &txs.BaseTx{
@@ -764,6 +769,7 @@ func TestBaseTxSemanticVerifyPendingInvalidSignature(t *testing.T) {
 	}
 
 	err := vm.Initialize(
+		context.Background(),
 		ctx,
 		manager.NewMemDB(version.Semantic1_0_0),
 		genesisBytes,
@@ -787,11 +793,11 @@ func TestBaseTxSemanticVerifyPendingInvalidSignature(t *testing.T) {
 	}
 	vm.batchTimeout = 0
 
-	if err = vm.SetState(snow.Bootstrapping); err != nil {
+	if err = vm.SetState(context.Background(), snow.Bootstrapping); err != nil {
 		t.Fatal(err)
 	}
 
-	err = vm.SetState(snow.NormalOp)
+	err = vm.SetState(context.Background(), snow.NormalOp)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -845,13 +851,13 @@ func TestBaseTxSemanticVerifyPendingInvalidSignature(t *testing.T) {
 
 	ctx.Lock.Lock()
 	defer func() {
-		if err := vm.Shutdown(); err != nil {
+		if err := vm.Shutdown(context.Background()); err != nil {
 			t.Fatal(err)
 		}
 		ctx.Lock.Unlock()
 	}()
 
-	vm.PendingTxs()
+	_ = vm.PendingTxs(context.Background())
 
 	tx := &txs.Tx{
 		Unsigned: &txs.BaseTx{
@@ -901,7 +907,7 @@ func TestBaseTxSemanticVerifyMalformedOutput(t *testing.T) {
 	_, _, vm, _ := GenesisVM(t)
 	ctx := vm.ctx
 	defer func() {
-		if err := vm.Shutdown(); err != nil {
+		if err := vm.Shutdown(context.Background()); err != nil {
 			t.Fatal(err)
 		}
 		ctx.Lock.Unlock()
@@ -965,7 +971,7 @@ func TestBaseTxSemanticVerifyInvalidFxOutput(t *testing.T) {
 	)
 	ctx := vm.ctx
 	defer func() {
-		if err := vm.Shutdown(); err != nil {
+		if err := vm.Shutdown(context.Background()); err != nil {
 			t.Fatal(err)
 		}
 		ctx.Lock.Unlock()
@@ -1017,7 +1023,7 @@ func TestExportTxSemanticVerify(t *testing.T) {
 	genesisBytes, _, vm, _ := GenesisVM(t)
 	ctx := vm.ctx
 	defer func() {
-		if err := vm.Shutdown(); err != nil {
+		if err := vm.Shutdown(context.Background()); err != nil {
 			t.Fatal(err)
 		}
 		ctx.Lock.Unlock()
@@ -1041,7 +1047,7 @@ func TestExportTxSemanticVerify(t *testing.T) {
 				},
 			}},
 		}},
-		DestinationChain: platformChainID,
+		DestinationChain: constants.PlatformChainID,
 		ExportedOuts: []*avax.TransferableOutput{{
 			Asset: avax.Asset{ID: avaxID},
 			Out: &secp256k1fx.TransferOutput{
@@ -1058,7 +1064,7 @@ func TestExportTxSemanticVerify(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tx, err := vm.ParseTx(rawTx.Bytes())
+	tx, err := vm.ParseTx(context.Background(), rawTx.Bytes())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1081,7 +1087,7 @@ func TestExportTxSemanticVerifyUnknownCredFx(t *testing.T) {
 	genesisBytes, _, vm, _ := GenesisVM(t)
 	ctx := vm.ctx
 	defer func() {
-		if err := vm.Shutdown(); err != nil {
+		if err := vm.Shutdown(context.Background()); err != nil {
 			t.Fatal(err)
 		}
 		ctx.Lock.Unlock()
@@ -1105,7 +1111,7 @@ func TestExportTxSemanticVerifyUnknownCredFx(t *testing.T) {
 				},
 			}},
 		}},
-		DestinationChain: platformChainID,
+		DestinationChain: constants.PlatformChainID,
 		ExportedOuts: []*avax.TransferableOutput{{
 			Asset: avax.Asset{ID: avaxID},
 			Out: &secp256k1fx.TransferOutput{
@@ -1121,7 +1127,7 @@ func TestExportTxSemanticVerifyUnknownCredFx(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tx, err := vm.ParseTx(rawTx.Bytes())
+	tx, err := vm.ParseTx(context.Background(), rawTx.Bytes())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1145,7 +1151,7 @@ func TestExportTxSemanticVerifyMissingUTXO(t *testing.T) {
 	genesisBytes, _, vm, _ := GenesisVM(t)
 	ctx := vm.ctx
 	defer func() {
-		if err := vm.Shutdown(); err != nil {
+		if err := vm.Shutdown(context.Background()); err != nil {
 			t.Fatal(err)
 		}
 		ctx.Lock.Unlock()
@@ -1169,7 +1175,7 @@ func TestExportTxSemanticVerifyMissingUTXO(t *testing.T) {
 				},
 			}},
 		}},
-		DestinationChain: platformChainID,
+		DestinationChain: constants.PlatformChainID,
 		ExportedOuts: []*avax.TransferableOutput{{
 			Asset: avax.Asset{ID: avaxID},
 			Out: &secp256k1fx.TransferOutput{
@@ -1186,7 +1192,7 @@ func TestExportTxSemanticVerifyMissingUTXO(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tx, err := vm.ParseTx(rawTx.Bytes())
+	tx, err := vm.ParseTx(context.Background(), rawTx.Bytes())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1210,7 +1216,7 @@ func TestExportTxSemanticVerifyInvalidAssetID(t *testing.T) {
 	genesisBytes, _, vm, _ := GenesisVM(t)
 	ctx := vm.ctx
 	defer func() {
-		if err := vm.Shutdown(); err != nil {
+		if err := vm.Shutdown(context.Background()); err != nil {
 			t.Fatal(err)
 		}
 		ctx.Lock.Unlock()
@@ -1250,7 +1256,7 @@ func TestExportTxSemanticVerifyInvalidAssetID(t *testing.T) {
 				},
 			},
 		}},
-		DestinationChain: platformChainID,
+		DestinationChain: constants.PlatformChainID,
 		ExportedOuts: []*avax.TransferableOutput{{
 			Asset: avax.Asset{ID: assetID},
 			Out: &secp256k1fx.TransferOutput{
@@ -1273,7 +1279,7 @@ func TestExportTxSemanticVerifyInvalidAssetID(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tx, err := vm.ParseTx(rawTx.Bytes())
+	tx, err := vm.ParseTx(context.Background(), rawTx.Bytes())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1319,6 +1325,7 @@ func TestExportTxSemanticVerifyInvalidFx(t *testing.T) {
 	issuer := make(chan common.Message, 1)
 	vm := &VM{}
 	err = vm.Initialize(
+		context.Background(),
 		ctx,
 		baseDBManager.NewPrefixDBManager([]byte{1}),
 		genesisBytes,
@@ -1347,16 +1354,16 @@ func TestExportTxSemanticVerifyInvalidFx(t *testing.T) {
 	}
 	vm.batchTimeout = 0
 
-	if err := vm.SetState(snow.Bootstrapping); err != nil {
+	if err := vm.SetState(context.Background(), snow.Bootstrapping); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := vm.SetState(snow.NormalOp); err != nil {
+	if err := vm.SetState(context.Background(), snow.NormalOp); err != nil {
 		t.Fatal(err)
 	}
 
 	defer func() {
-		if err := vm.Shutdown(); err != nil {
+		if err := vm.Shutdown(context.Background()); err != nil {
 			t.Fatal(err)
 		}
 		ctx.Lock.Unlock()
@@ -1378,7 +1385,7 @@ func TestExportTxSemanticVerifyInvalidFx(t *testing.T) {
 				},
 			}},
 		}},
-		DestinationChain: platformChainID,
+		DestinationChain: constants.PlatformChainID,
 		ExportedOuts: []*avax.TransferableOutput{{
 			Asset: avax.Asset{ID: avaxID},
 			Out: &secp256k1fx.TransferOutput{
@@ -1394,7 +1401,7 @@ func TestExportTxSemanticVerifyInvalidFx(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tx, err := vm.ParseTx(rawTx.Bytes())
+	tx, err := vm.ParseTx(context.Background(), rawTx.Bytes())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1418,7 +1425,7 @@ func TestExportTxSemanticVerifyInvalidTransfer(t *testing.T) {
 	genesisBytes, _, vm, _ := GenesisVM(t)
 	ctx := vm.ctx
 	defer func() {
-		if err := vm.Shutdown(); err != nil {
+		if err := vm.Shutdown(context.Background()); err != nil {
 			t.Fatal(err)
 		}
 		ctx.Lock.Unlock()
@@ -1442,7 +1449,7 @@ func TestExportTxSemanticVerifyInvalidTransfer(t *testing.T) {
 				},
 			}},
 		}},
-		DestinationChain: platformChainID,
+		DestinationChain: constants.PlatformChainID,
 		ExportedOuts: []*avax.TransferableOutput{{
 			Asset: avax.Asset{ID: avaxID},
 			Out: &secp256k1fx.TransferOutput{
@@ -1458,7 +1465,7 @@ func TestExportTxSemanticVerifyInvalidTransfer(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tx, err := vm.ParseTx(rawTx.Bytes())
+	tx, err := vm.ParseTx(context.Background(), rawTx.Bytes())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1474,5 +1481,107 @@ func TestExportTxSemanticVerifyInvalidTransfer(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatalf("should have erred due to an invalid credential")
+	}
+}
+
+func TestExportTxSemanticVerifyTransferCustomAsset(t *testing.T) {
+	genesisBytes, _, vm, _ := GenesisVM(t)
+	ctx := vm.ctx
+	defer func() {
+		if err := vm.Shutdown(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		ctx.Lock.Unlock()
+	}()
+
+	vm.clock.Set(testBanffTime.Add(time.Second))
+
+	genesisAvaxTx := GetAVAXTxFromGenesisTest(genesisBytes, t)
+	avaxID := genesisAvaxTx.ID()
+
+	genesisCustomAssetTx := GetCreateTxFromGenesisTest(t, genesisBytes, "myFixedCapAsset")
+	customAssetID := genesisCustomAssetTx.ID()
+
+	rawTx := &txs.Tx{Unsigned: &txs.ExportTx{
+		BaseTx: txs.BaseTx{BaseTx: avax.BaseTx{
+			NetworkID:    networkID,
+			BlockchainID: chainID,
+			Ins: []*avax.TransferableInput{
+				{
+					UTXOID: avax.UTXOID{
+						TxID:        customAssetID,
+						OutputIndex: 1,
+					},
+					Asset: avax.Asset{ID: customAssetID},
+					In: &secp256k1fx.TransferInput{
+						Amt:   startBalance,
+						Input: secp256k1fx.Input{SigIndices: []uint32{0}},
+					},
+				},
+				{
+					UTXOID: avax.UTXOID{
+						TxID:        avaxID,
+						OutputIndex: 2,
+					},
+					Asset: avax.Asset{ID: avaxID},
+					In: &secp256k1fx.TransferInput{
+						Amt:   startBalance,
+						Input: secp256k1fx.Input{SigIndices: []uint32{0}},
+					},
+				},
+			},
+		}},
+		DestinationChain: constants.PlatformChainID,
+		ExportedOuts: []*avax.TransferableOutput{
+			{
+				Asset: avax.Asset{ID: customAssetID},
+				Out: &secp256k1fx.TransferOutput{
+					Amt: startBalance,
+					OutputOwners: secp256k1fx.OutputOwners{
+						Threshold: 1,
+						Addrs:     []ids.ShortID{keys[0].PublicKey().Address()},
+					},
+				},
+			},
+			{
+				Asset: avax.Asset{ID: avaxID},
+				Out: &secp256k1fx.TransferOutput{
+					Amt: startBalance - vm.TxFee,
+					OutputOwners: secp256k1fx.OutputOwners{
+						Threshold: 1,
+						Addrs:     []ids.ShortID{keys[0].PublicKey().Address()},
+					},
+				},
+			},
+		},
+	}}
+
+	err := rawTx.SignSECP256K1Fx(
+		vm.parser.Codec(),
+		[][]*crypto.PrivateKeySECP256K1R{
+			{keys[0]},
+			{keys[0]},
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tx, err := vm.ParseTx(context.Background(), rawTx.Bytes())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	utx, ok := tx.(*UniqueTx)
+	if !ok {
+		t.Fatalf("wrong tx type")
+	}
+
+	err = rawTx.Unsigned.Visit(&txSemanticVerify{
+		tx: utx.Tx,
+		vm: vm,
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }

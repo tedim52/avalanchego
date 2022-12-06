@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package txs
@@ -16,8 +16,8 @@ import (
 var (
 	errNoImportInputs = errors.New("no import inputs")
 
-	_ UnsignedTx             = &ImportTx{}
-	_ secp256k1fx.UnsignedTx = &ImportTx{}
+	_ UnsignedTx             = (*ImportTx)(nil)
+	_ secp256k1fx.UnsignedTx = (*ImportTx)(nil)
 )
 
 // ImportTx is a transaction that imports an asset from another blockchain.
@@ -71,7 +71,7 @@ func (t *ImportTx) SyntacticVerify(
 	txFeeAssetID ids.ID,
 	txFee uint64,
 	_ uint64,
-	numFxs int,
+	_ int,
 ) error {
 	switch {
 	case t == nil:

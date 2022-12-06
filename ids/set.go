@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package ids
@@ -85,7 +85,9 @@ func (ids *Set) Overlaps(big Set) bool {
 }
 
 // Len returns the number of ids in this set
-func (ids Set) Len() int { return len(ids) }
+func (ids Set) Len() int {
+	return len(ids)
+}
 
 // Remove all the id from this set, if the id isn't in the set, nothing happens
 func (ids *Set) Remove(idList ...ID) {

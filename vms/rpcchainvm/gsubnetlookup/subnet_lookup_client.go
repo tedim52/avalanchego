@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package gsubnetlookup
@@ -12,7 +12,7 @@ import (
 	subnetlookuppb "github.com/ava-labs/avalanchego/proto/pb/subnetlookup"
 )
 
-var _ snow.SubnetLookup = &Client{}
+var _ snow.SubnetLookup = (*Client)(nil)
 
 // Client is a subnet lookup that talks over RPC.
 type Client struct {

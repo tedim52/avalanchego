@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package executor
@@ -15,6 +15,7 @@ import (
 	"github.com/ava-labs/avalanchego/chains/atomic"
 	"github.com/ava-labs/avalanchego/codec"
 	"github.com/ava-labs/avalanchego/codec/linearcodec"
+	"github.com/ava-labs/avalanchego/database"
 	"github.com/ava-labs/avalanchego/database/manager"
 	"github.com/ava-labs/avalanchego/database/prefixdb"
 	"github.com/ava-labs/avalanchego/database/versiondb"
@@ -37,7 +38,7 @@ import (
 	"github.com/ava-labs/avalanchego/vms/platformvm/api"
 	"github.com/ava-labs/avalanchego/vms/platformvm/config"
 	"github.com/ava-labs/avalanchego/vms/platformvm/fx"
-	"github.com/ava-labs/avalanchego/vms/platformvm/genesis"
+	"github.com/ava-labs/avalanchego/vms/platformvm/metrics"
 	"github.com/ava-labs/avalanchego/vms/platformvm/reward"
 	"github.com/ava-labs/avalanchego/vms/platformvm/state"
 	"github.com/ava-labs/avalanchego/vms/platformvm/status"
@@ -87,11 +88,24 @@ type environment struct {
 	msm            *mutableSharedMemory
 	fx             fx.Fx
 	state          state.State
+	states         map[ids.ID]state.Chain
 	atomicUTXOs    avax.AtomicUTXOManager
 	uptimes        uptime.Manager
 	utxosHandler   utxo.Handler
-	txBuilder      builder.TxBuilder
+	txBuilder      builder.Builder
 	backend        Backend
+}
+
+func (e *environment) GetState(blkID ids.ID) (state.Chain, bool) {
+	if blkID == lastAcceptedID {
+		return e.state, true
+	}
+	chainState, ok := e.states[blkID]
+	return chainState, ok
+}
+
+func (e *environment) SetState(blkID ids.ID, chainState state.Chain) {
+	e.states[blkID] = chainState
 }
 
 // TODO: snLookup currently duplicated in vm_test.go. Remove duplication
@@ -107,12 +121,12 @@ func (sn *snLookup) SubnetID(chainID ids.ID) (ids.ID, error) {
 	return subnetID, nil
 }
 
-func newEnvironment() *environment {
+func newEnvironment(postBanff bool) *environment {
 	var isBootstrapped utils.AtomicBool
 	isBootstrapped.SetValue(true)
 
-	config := defaultConfig()
-	clk := defaultClock()
+	config := defaultConfig(postBanff)
+	clk := defaultClock(postBanff)
 
 	baseDBManager := manager.NewMemDB(version.CurrentDatabase)
 	baseDB := versiondb.New(baseDBManager.Current().Database)
@@ -127,9 +141,9 @@ func newEnvironment() *environment {
 	uptimes := uptime.NewManager(baseState)
 	utxoHandler := utxo.NewHandler(ctx, &clk, baseState, fx)
 
-	txBuilder := builder.NewTxBuilder(
+	txBuilder := builder.New(
 		ctx,
-		config,
+		&config,
 		&clk,
 		fx,
 		baseState,
@@ -138,20 +152,17 @@ func newEnvironment() *environment {
 	)
 
 	backend := Backend{
-		Config:        &config,
-		Ctx:           ctx,
-		Clk:           &clk,
-		Bootstrapped:  &isBootstrapped,
-		Fx:            fx,
-		FlowChecker:   utxoHandler,
-		Uptimes:       uptimes,
-		Rewards:       rewards,
-		StateVersions: state.NewVersions(lastAcceptedID, baseState),
+		Config:       &config,
+		Ctx:          ctx,
+		Clk:          &clk,
+		Bootstrapped: &isBootstrapped,
+		Fx:           fx,
+		FlowChecker:  utxoHandler,
+		Uptimes:      uptimes,
+		Rewards:      rewards,
 	}
 
-	addSubnet(baseState, txBuilder, backend)
-
-	return &environment{
+	env := &environment{
 		isBootstrapped: &isBootstrapped,
 		config:         &config,
 		clk:            &clk,
@@ -160,18 +171,22 @@ func newEnvironment() *environment {
 		msm:            msm,
 		fx:             fx,
 		state:          baseState,
+		states:         make(map[ids.ID]state.Chain),
 		atomicUTXOs:    atomicUTXOs,
 		uptimes:        uptimes,
 		utxosHandler:   utxoHandler,
 		txBuilder:      txBuilder,
 		backend:        backend,
 	}
+
+	addSubnet(env, txBuilder)
+
+	return env
 }
 
 func addSubnet(
-	baseState state.State,
-	txBuilder builder.TxBuilder,
-	backend Backend,
+	env *environment,
+	txBuilder builder.Builder,
 ) {
 	// Create a subnet
 	var err error
@@ -190,13 +205,13 @@ func addSubnet(
 	}
 
 	// store it
-	stateDiff, err := state.NewDiff(lastAcceptedID, backend.StateVersions)
+	stateDiff, err := state.NewDiff(lastAcceptedID, env)
 	if err != nil {
 		panic(err)
 	}
 
 	executor := StandardTxExecutor{
-		Backend: &backend,
+		Backend: &env.backend,
 		State:   stateDiff,
 		Tx:      testSubnet1,
 	}
@@ -206,59 +221,49 @@ func addSubnet(
 	}
 
 	stateDiff.AddTx(testSubnet1, status.Committed)
-	stateDiff.Apply(baseState)
+	stateDiff.Apply(env.state)
 }
 
 func defaultState(
 	cfg *config.Config,
 	ctx *snow.Context,
-	baseDB *versiondb.Database,
+	db database.Database,
 	rewards reward.Calculator,
 ) state.State {
-	dummyLocalStake := prometheus.NewGauge(prometheus.GaugeOpts{
-		Namespace: "uts",
-		Name:      "local_staked",
-		Help:      "Total amount of AVAX on this node staked",
-	})
-	dummyTotalStake := prometheus.NewGauge(prometheus.GaugeOpts{
-		Namespace: "uts",
-		Name:      "total_staked",
-		Help:      "Total amount of AVAX staked",
-	})
-
+	genesisBytes := buildGenesisTest(ctx)
 	state, err := state.New(
-		baseDB,
+		db,
+		genesisBytes,
 		prometheus.NewRegistry(),
 		cfg,
 		ctx,
-		dummyLocalStake,
-		dummyTotalStake,
+		metrics.Noop,
 		rewards,
 	)
 	if err != nil {
 		panic(err)
 	}
 
-	// setup initial data as if we are storing genesis
-	initializeState(state, ctx)
-
 	// persist and reload to init a bunch of in-memory stuff
-	if err := state.Write( /*height*/ 0); err != nil {
+	state.SetHeight(0)
+	if err := state.Commit(); err != nil {
 		panic(err)
 	}
-	if err := state.Load(); err != nil {
+	state.SetHeight( /*height*/ 0)
+	if err := state.Commit(); err != nil {
 		panic(err)
 	}
+	lastAcceptedID = state.GetLastAccepted()
 	return state
 }
 
-func defaultCtx(baseDB *versiondb.Database) (*snow.Context, *mutableSharedMemory) {
+func defaultCtx(db database.Database) (*snow.Context, *mutableSharedMemory) {
 	ctx := snow.DefaultContextTest()
 	ctx.NetworkID = 10
 	ctx.XChainID = xChainID
 	ctx.AVAXAssetID = avaxAssetID
 
-	atomicDB := prefixdb.New([]byte{1}, baseDB)
+	atomicDB := prefixdb.New([]byte{1}, db)
 	m := atomic.NewMemory(atomicDB)
 
 	msm := &mutableSharedMemory{
@@ -277,7 +282,11 @@ func defaultCtx(baseDB *versiondb.Database) (*snow.Context, *mutableSharedMemory
 	return ctx, msm
 }
 
-func defaultConfig() config.Config {
+func defaultConfig(postBanff bool) config.Config {
+	banffTime := mockable.MaxTime
+	if postBanff {
+		banffTime = defaultValidateEndTime.Add(-2 * time.Second)
+	}
 	return config.Config{
 		Chains:                 chains.MockManager{},
 		UptimeLockedCalculator: uptime.NewLockedCalculator(),
@@ -297,14 +306,19 @@ func defaultConfig() config.Config {
 			SupplyCap:          720 * units.MegaAvax,
 		},
 		ApricotPhase3Time: defaultValidateEndTime,
-		ApricotPhase4Time: defaultValidateEndTime,
 		ApricotPhase5Time: defaultValidateEndTime,
+		BanffTime:         banffTime,
 	}
 }
 
-func defaultClock() mockable.Clock {
+func defaultClock(postBanff bool) mockable.Clock {
+	now := defaultGenesisTime
+	if postBanff {
+		// 1 second after Banff fork
+		now = defaultValidateEndTime.Add(-2 * time.Second)
+	}
 	clk := mockable.Clock{}
-	clk.Set(defaultGenesisTime)
+	clk.Set(now)
 	return clk
 }
 
@@ -314,9 +328,17 @@ type fxVMInt struct {
 	log      logging.Logger
 }
 
-func (fvi *fxVMInt) CodecRegistry() codec.Registry { return fvi.registry }
-func (fvi *fxVMInt) Clock() *mockable.Clock        { return fvi.clk }
-func (fvi *fxVMInt) Logger() logging.Logger        { return fvi.log }
+func (fvi *fxVMInt) CodecRegistry() codec.Registry {
+	return fvi.registry
+}
+
+func (fvi *fxVMInt) Clock() *mockable.Clock {
+	return fvi.clk
+}
+
+func (fvi *fxVMInt) Logger() logging.Logger {
+	return fvi.log
+}
 
 func defaultFx(clk *mockable.Clock, log logging.Logger, isBootstrapped bool) fx.Fx {
 	fxVMInt := &fxVMInt{
@@ -336,22 +358,7 @@ func defaultFx(clk *mockable.Clock, log logging.Logger, isBootstrapped bool) fx.
 	return res
 }
 
-func initializeState(tState state.State, ctx *snow.Context) {
-	genesisBytes := buildGenesis(ctx)
-	genesisState, err := genesis.ParseState(genesisBytes)
-	if err != nil {
-		panic(err)
-	}
-	dummyGenID := ids.ID{'g', 'e', 'n', 'I', 'D'}
-	if err := tState.SyncGenesis(
-		dummyGenID,
-		genesisState,
-	); err != nil {
-		panic(err)
-	}
-}
-
-func buildGenesis(ctx *snow.Context) []byte {
+func buildGenesisTest(ctx *snow.Context) []byte {
 	genesisUTXOs := make([]api.UTXO, len(preFundedKeys))
 	hrp := constants.NetworkIDToHRP[testNetworkID]
 	for i, key := range preFundedKeys {
@@ -366,14 +373,14 @@ func buildGenesis(ctx *snow.Context) []byte {
 		}
 	}
 
-	genesisValidators := make([]api.PrimaryValidator, len(preFundedKeys))
+	genesisValidators := make([]api.PermissionlessValidator, len(preFundedKeys))
 	for i, key := range preFundedKeys {
 		nodeID := ids.NodeID(key.PublicKey().Address())
 		addr, err := address.FormatBech32(hrp, nodeID.Bytes())
 		if err != nil {
 			panic(err)
 		}
-		genesisValidators[i] = api.PrimaryValidator{
+		genesisValidators[i] = api.PermissionlessValidator{
 			Staker: api.Staker{
 				StartTime: json.Uint64(defaultValidateStartTime.Unix()),
 				EndTime:   json.Uint64(defaultValidateEndTime.Unix()),
@@ -405,7 +412,7 @@ func buildGenesis(ctx *snow.Context) []byte {
 	buildGenesisResponse := api.BuildGenesisReply{}
 	platformvmSS := api.StaticService{}
 	if err := platformvmSS.BuildGenesis(nil, &buildGenesisArgs, &buildGenesisResponse); err != nil {
-		panic(fmt.Errorf("problem while building platform chain's genesis state: %v", err))
+		panic(fmt.Errorf("problem while building platform chain's genesis state: %w", err))
 	}
 
 	genesisBytes, err := formatting.Decode(buildGenesisResponse.Encoding, buildGenesisResponse.Bytes)
@@ -432,7 +439,8 @@ func shutdownEnvironment(env *environment) error {
 		if err := env.uptimes.Shutdown(validatorIDs); err != nil {
 			return err
 		}
-		if err := env.state.Write( /*height*/ math.MaxUint64); err != nil {
+		env.state.SetHeight( /*height*/ math.MaxUint64)
+		if err := env.state.Commit(); err != nil {
 			return err
 		}
 	}

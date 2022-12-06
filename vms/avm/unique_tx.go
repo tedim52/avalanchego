@@ -1,11 +1,14 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package avm
 
 import (
+	"context"
 	"errors"
 	"fmt"
+
+	"go.uber.org/zap"
 
 	"github.com/ava-labs/avalanchego/cache"
 	"github.com/ava-labs/avalanchego/ids"
@@ -17,15 +20,14 @@ import (
 
 var (
 	errAssetIDMismatch = errors.New("asset IDs in the input don't match the utxo")
-	errWrongAssetID    = errors.New("asset ID must be AVAX in the atomic tx")
 	errMissingUTXO     = errors.New("missing utxo")
 	errUnknownTx       = errors.New("transaction is unknown")
 	errRejectedTx      = errors.New("transaction is rejected")
 )
 
 var (
-	_ snowstorm.Tx    = &UniqueTx{}
-	_ cache.Evictable = &UniqueTx{}
+	_ snowstorm.Tx    = (*UniqueTx)(nil)
+	_ cache.Evictable = (*UniqueTx)(nil)
 )
 
 // UniqueTx provides a de-duplication service for txs. This only provides a
@@ -111,11 +113,16 @@ func (tx *UniqueTx) setStatus(status choices.Status) error {
 }
 
 // ID returns the wrapped txID
-func (tx *UniqueTx) ID() ids.ID       { return tx.txID }
-func (tx *UniqueTx) Key() interface{} { return tx.txID }
+func (tx *UniqueTx) ID() ids.ID {
+	return tx.txID
+}
+
+func (tx *UniqueTx) Key() interface{} {
+	return tx.txID
+}
 
 // Accept is called when the transaction was finalized as accepted by consensus
-func (tx *UniqueTx) Accept() error {
+func (tx *UniqueTx) Accept(context.Context) error {
 	if s := tx.Status(); s != choices.Processing {
 		return fmt.Errorf("transaction has invalid status: %s", s)
 	}
@@ -192,19 +199,27 @@ func (tx *UniqueTx) Accept() error {
 }
 
 // Reject is called when the transaction was finalized as rejected by consensus
-func (tx *UniqueTx) Reject() error {
+func (tx *UniqueTx) Reject(context.Context) error {
 	defer tx.vm.db.Abort()
 
 	if err := tx.setStatus(choices.Rejected); err != nil {
-		tx.vm.ctx.Log.Error("Failed to reject tx %s due to %s", tx.txID, err)
+		tx.vm.ctx.Log.Error("failed to reject tx",
+			zap.Stringer("txID", tx.txID),
+			zap.Error(err),
+		)
 		return err
 	}
 
 	txID := tx.ID()
-	tx.vm.ctx.Log.Debug("Rejecting Tx: %s", txID)
+	tx.vm.ctx.Log.Debug("rejecting tx",
+		zap.Stringer("txID", txID),
+	)
 
 	if err := tx.vm.db.Commit(); err != nil {
-		tx.vm.ctx.Log.Error("Failed to commit reject %s due to %s", tx.txID, err)
+		tx.vm.ctx.Log.Error("failed to commit reject",
+			zap.Stringer("txID", tx.txID),
+			zap.Error(err),
+		)
 		return err
 	}
 
@@ -273,12 +288,12 @@ func (tx *UniqueTx) InputIDs() []ids.ID {
 }
 
 // Whitelist is not supported by this transaction type, so [false] is returned.
-func (tx *UniqueTx) HasWhitelist() bool {
+func (*UniqueTx) HasWhitelist() bool {
 	return false
 }
 
 // Whitelist is not supported by this transaction type, so [false] is returned.
-func (tx *UniqueTx) Whitelist() (ids.Set, error) {
+func (*UniqueTx) Whitelist(context.Context) (ids.Set, error) {
 	return nil, nil
 }
 
@@ -322,7 +337,7 @@ func (tx *UniqueTx) verifyWithoutCacheWrites() error {
 }
 
 // Verify the validity of this transaction
-func (tx *UniqueTx) Verify() error {
+func (tx *UniqueTx) Verify(context.Context) error {
 	if err := tx.verifyWithoutCacheWrites(); err != nil {
 		return err
 	}

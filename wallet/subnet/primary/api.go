@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package primary
@@ -14,6 +14,7 @@ import (
 	"github.com/ava-labs/avalanchego/vms/avm"
 	"github.com/ava-labs/avalanchego/vms/components/avax"
 	"github.com/ava-labs/avalanchego/vms/platformvm"
+	"github.com/ava-labs/avalanchego/vms/platformvm/txs"
 	"github.com/ava-labs/avalanchego/wallet/chain/p"
 	"github.com/ava-labs/avalanchego/wallet/chain/x"
 )
@@ -69,7 +70,7 @@ func FetchState(ctx context.Context, uri string, addrs ids.ShortSet) (p.Context,
 		{
 			id:     constants.PlatformChainID,
 			client: platformvm.NewClient(uri),
-			codec:  platformvm.Codec,
+			codec:  txs.Codec,
 		},
 		{
 			id:     xCTX.BlockchainID(),

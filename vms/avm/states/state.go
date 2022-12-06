@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package states
@@ -18,7 +18,7 @@ var (
 	singletonPrefix = []byte("singleton")
 	txPrefix        = []byte("tx")
 
-	_ State = &state{}
+	_ State = (*state)(nil)
 )
 
 // State persistently maintains a set of UTXOs, transaction, statuses, and

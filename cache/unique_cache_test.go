@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package cache
@@ -14,8 +14,13 @@ type evictable struct {
 	evicted int
 }
 
-func (e *evictable) Key() interface{} { return e.id }
-func (e *evictable) Evict()           { e.evicted++ }
+func (e *evictable) Key() interface{} {
+	return e.id
+}
+
+func (e *evictable) Evict() {
+	e.evicted++
+}
 
 func TestEvictableLRU(t *testing.T) {
 	cache := EvictableLRU{}

@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package nftfx
@@ -22,7 +22,7 @@ const (
 var (
 	errNilTransferOutput              = errors.New("nil transfer output")
 	errPayloadTooLarge                = errors.New("payload too large")
-	_                    verify.State = &TransferOutput{}
+	_                    verify.State = (*TransferOutput)(nil)
 )
 
 type TransferOutput struct {
@@ -56,4 +56,6 @@ func (out *TransferOutput) Verify() error {
 	}
 }
 
-func (out *TransferOutput) VerifyState() error { return out.Verify() }
+func (out *TransferOutput) VerifyState() error {
+	return out.Verify()
+}

@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package process
@@ -6,6 +6,8 @@ package process
 import (
 	"fmt"
 	"sync"
+
+	"go.uber.org/zap"
 
 	"github.com/ava-labs/avalanchego/app"
 	"github.com/ava-labs/avalanchego/nat"
@@ -29,7 +31,7 @@ var (
 	stakingPortName = fmt.Sprintf("%s-staking", constants.AppName)
 	httpPortName    = fmt.Sprintf("%s-http", constants.AppName)
 
-	_ app.App = &process{}
+	_ app.App = (*process)(nil)
 )
 
 // process is a wrapper around a node that runs in this process
@@ -69,25 +71,18 @@ func (p *process) Start() error {
 	// update fd limit
 	fdLimit := p.config.FdLimit
 	if err := ulimit.Set(fdLimit, log); err != nil {
-		log.Fatal("failed to set fd-limit: %s", err)
+		log.Fatal("failed to set fd-limit",
+			zap.Error(err),
+		)
 		logFactory.Close()
 		return err
 	}
 
 	// Track if sybil control is enforced
 	if !p.config.EnableStaking {
-		log.Warn("Staking is disabled. Sybil control is not enforced.")
-	}
-
-	// Check if transaction signatures should be checked
-	if !p.config.EnableCrypto {
-		// TODO: actually disable crypto verification
-		log.Warn("transaction signatures are not being checked")
-	}
-
-	// Track if assertions should be executed
-	if p.config.LoggingConfig.Assertions {
-		log.Debug("assertions are enabled. This may slow down execution")
+		log.Warn("sybil control is not enforced",
+			zap.String("reason", "staking is disabled"),
+		)
 	}
 
 	// TODO move this to config
@@ -100,7 +95,7 @@ func (p *process) Start() error {
 
 	mapper := nat.NewPortMapper(log, p.config.Nat)
 
-	// Open staking port we want for NAT Traversal to have the external port
+	// Open staking port we want for NAT traversal to have the external port
 	// (config.IP.Port) to connect to our internal listening port
 	// (config.InternalStakingPort) which should be the same in most cases.
 	if p.config.IPPort.IPPort().Port != 0 {
@@ -116,7 +111,7 @@ func (p *process) Start() error {
 
 	// Open the HTTP port iff the HTTP server is not listening on localhost
 	if p.config.HTTPHost != "127.0.0.1" && p.config.HTTPHost != "localhost" && p.config.HTTPPort != 0 {
-		// For NAT Traversal we want to route from the external port
+		// For NAT traversal we want to route from the external port
 		// (config.ExternalHTTPPort) to our internal port (config.HTTPPort)
 		mapper.Map(
 			"TCP",
@@ -134,7 +129,9 @@ func (p *process) Start() error {
 	go p.config.IPUpdater.Dispatch(log)
 
 	if err := p.node.Initialize(&p.config, log, logFactory); err != nil {
-		log.Fatal("error initializing node: %s", err)
+		log.Fatal("error initializing node",
+			zap.Error(err),
+		)
 		mapper.UnmapAllPorts()
 		p.config.IPUpdater.Stop()
 		log.Stop()
@@ -164,7 +161,9 @@ func (p *process) Start() error {
 		}()
 
 		err := p.node.Dispatch()
-		log.Debug("dispatch returned with: %s", err)
+		log.Debug("dispatch returned",
+			zap.Error(err),
+		)
 	}()
 	return nil
 }

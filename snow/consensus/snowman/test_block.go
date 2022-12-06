@@ -1,9 +1,10 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package snowman
 
 import (
+	"context"
 	"sort"
 	"time"
 
@@ -11,7 +12,7 @@ import (
 	"github.com/ava-labs/avalanchego/snow/choices"
 )
 
-var _ Block = &TestBlock{}
+var _ Block = (*TestBlock)(nil)
 
 // TestBlock is a useful test block
 type TestBlock struct {
@@ -24,17 +25,41 @@ type TestBlock struct {
 	BytesV     []byte
 }
 
-func (b *TestBlock) Parent() ids.ID       { return b.ParentV }
-func (b *TestBlock) Height() uint64       { return b.HeightV }
-func (b *TestBlock) Timestamp() time.Time { return b.TimestampV }
-func (b *TestBlock) Verify() error        { return b.VerifyV }
-func (b *TestBlock) Bytes() []byte        { return b.BytesV }
+func (b *TestBlock) Parent() ids.ID {
+	return b.ParentV
+}
+
+func (b *TestBlock) Height() uint64 {
+	return b.HeightV
+}
+
+func (b *TestBlock) Timestamp() time.Time {
+	return b.TimestampV
+}
+
+func (b *TestBlock) Verify(context.Context) error {
+	return b.VerifyV
+}
+
+func (b *TestBlock) Bytes() []byte {
+	return b.BytesV
+}
 
 type sortBlocks []*TestBlock
 
-func (sb sortBlocks) Less(i, j int) bool { return sb[i].HeightV < sb[j].HeightV }
-func (sb sortBlocks) Len() int           { return len(sb) }
-func (sb sortBlocks) Swap(i, j int)      { sb[j], sb[i] = sb[i], sb[j] }
+func (sb sortBlocks) Less(i, j int) bool {
+	return sb[i].HeightV < sb[j].HeightV
+}
+
+func (sb sortBlocks) Len() int {
+	return len(sb)
+}
+
+func (sb sortBlocks) Swap(i, j int) {
+	sb[j], sb[i] = sb[i], sb[j]
+}
 
 // SortTestBlocks sorts the array of blocks by height
-func SortTestBlocks(blocks []*TestBlock) { sort.Sort(sortBlocks(blocks)) }
+func SortTestBlocks(blocks []*TestBlock) {
+	sort.Sort(sortBlocks(blocks))
+}

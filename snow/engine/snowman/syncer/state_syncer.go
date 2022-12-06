@@ -1,13 +1,16 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package syncer
 
 import (
+	"context"
 	"fmt"
 	"time"
 
 	stdmath "math"
+
+	"go.uber.org/zap"
 
 	"github.com/ava-labs/avalanchego/database"
 	"github.com/ava-labs/avalanchego/ids"
@@ -15,12 +18,11 @@ import (
 	"github.com/ava-labs/avalanchego/snow/engine/common"
 	"github.com/ava-labs/avalanchego/snow/engine/snowman/block"
 	"github.com/ava-labs/avalanchego/snow/validators"
-	"github.com/ava-labs/avalanchego/utils/formatting"
 	"github.com/ava-labs/avalanchego/utils/math"
 	"github.com/ava-labs/avalanchego/version"
 )
 
-var _ common.StateSyncer = &stateSyncer{}
+var _ common.StateSyncer = (*stateSyncer)(nil)
 
 // summary content as received from network, along with accumulated weight.
 type weightedSummary struct {
@@ -46,7 +48,7 @@ type stateSyncer struct {
 	requestID uint32
 
 	stateSyncVM        block.StateSyncableVM
-	onDoneStateSyncing func(lastReqID uint32) error
+	onDoneStateSyncing func(ctx context.Context, lastReqID uint32) error
 
 	// we track the (possibly nil) local summary to help engine
 	// choosing among multiple validated summaries
@@ -77,7 +79,7 @@ type stateSyncer struct {
 	weightedSummaries map[ids.ID]*weightedSummary
 
 	// summaries received may be different even if referring to the same height
-	// we keep a list of deduplcated height ready for voting
+	// we keep a list of deduplicated height ready for voting
 	summariesHeights       map[uint64]struct{}
 	uniqueSummariesHeights []uint64
 
@@ -87,7 +89,7 @@ type stateSyncer struct {
 
 func New(
 	cfg Config,
-	onDoneStateSyncing func(lastReqID uint32) error,
+	onDoneStateSyncing func(ctx context.Context, lastReqID uint32) error,
 ) common.StateSyncer {
 	ssVM, _ := cfg.VM.(block.StateSyncableVM)
 	return &stateSyncer{
@@ -104,26 +106,31 @@ func New(
 	}
 }
 
-func (ss *stateSyncer) StateSummaryFrontier(validatorID ids.NodeID, requestID uint32, summaryBytes []byte) error {
+func (ss *stateSyncer) StateSummaryFrontier(ctx context.Context, nodeID ids.NodeID, requestID uint32, summaryBytes []byte) error {
 	// ignores any late responses
 	if requestID != ss.requestID {
-		ss.Ctx.Log.Debug("Received an Out-of-Sync StateSummaryFrontier - validator: %v - expectedRequestID: %v, requestID: %v",
-			validatorID, ss.requestID, requestID)
+		ss.Ctx.Log.Debug("received out-of-sync StateSummaryFrontier message",
+			zap.Stringer("nodeID", nodeID),
+			zap.Uint32("expectedRequestID", ss.requestID),
+			zap.Uint32("requestID", requestID),
+		)
 		return nil
 	}
 
-	if !ss.pendingSeeders.Contains(validatorID) {
-		ss.Ctx.Log.Debug("Received a StateSummaryFrontier message from %s unexpectedly", validatorID)
+	if !ss.pendingSeeders.Contains(nodeID) {
+		ss.Ctx.Log.Debug("received unexpected StateSummaryFrontier message",
+			zap.Stringer("nodeID", nodeID),
+		)
 		return nil
 	}
 
-	// Mark that we received a response from [validatorID]
-	ss.pendingSeeders.Remove(validatorID)
+	// Mark that we received a response from [nodeID]
+	ss.pendingSeeders.Remove(nodeID)
 
 	// retrieve summary ID and register frontier;
 	// make sure next beacons are reached out
 	// even in case invalid summaries are received
-	if summary, err := ss.stateSyncVM.ParseStateSummary(summaryBytes); err == nil {
+	if summary, err := ss.stateSyncVM.ParseStateSummary(ctx, summaryBytes); err == nil {
 		ss.weightedSummaries[summary.ID()] = &weightedSummary{
 			summary: summary,
 		}
@@ -134,30 +141,38 @@ func (ss *stateSyncer) StateSummaryFrontier(validatorID ids.NodeID, requestID ui
 			ss.uniqueSummariesHeights = append(ss.uniqueSummariesHeights, height)
 		}
 	} else {
-		ss.Ctx.Log.Debug("Could not parse summary from bytes: %s", err)
-		ss.Ctx.Log.Verbo("%s", formatting.DumpBytes(summaryBytes))
+		ss.Ctx.Log.Debug("failed to parse summary",
+			zap.Error(err),
+		)
+		ss.Ctx.Log.Verbo("failed to parse summary",
+			zap.Binary("summary", summaryBytes),
+			zap.Error(err),
+		)
 	}
 
-	return ss.receivedStateSummaryFrontier()
+	return ss.receivedStateSummaryFrontier(ctx)
 }
 
-func (ss *stateSyncer) GetStateSummaryFrontierFailed(validatorID ids.NodeID, requestID uint32) error {
+func (ss *stateSyncer) GetStateSummaryFrontierFailed(ctx context.Context, nodeID ids.NodeID, requestID uint32) error {
 	// ignores any late responses
 	if requestID != ss.requestID {
-		ss.Ctx.Log.Debug("Received an Out-of-Sync GetStateSummaryFrontierFailed - validator: %v - expectedRequestID: %v, requestID: %v",
-			validatorID, ss.requestID, requestID)
+		ss.Ctx.Log.Debug("received out-of-sync GetStateSummaryFrontierFailed message",
+			zap.Stringer("nodeID", nodeID),
+			zap.Uint32("expectedRequestID", ss.requestID),
+			zap.Uint32("requestID", requestID),
+		)
 		return nil
 	}
 
-	// Mark that we didn't get a respose from [validatorID]
-	ss.failedSeeders.Add(validatorID)
-	ss.pendingSeeders.Remove(validatorID)
+	// Mark that we didn't get a response from [nodeID]
+	ss.failedSeeders.Add(nodeID)
+	ss.pendingSeeders.Remove(nodeID)
 
-	return ss.receivedStateSummaryFrontier()
+	return ss.receivedStateSummaryFrontier(ctx)
 }
 
-func (ss *stateSyncer) receivedStateSummaryFrontier() error {
-	ss.sendGetStateSummaryFrontiers()
+func (ss *stateSyncer) receivedStateSummaryFrontier(ctx context.Context) error {
+	ss.sendGetStateSummaryFrontiers(ctx)
 
 	// still waiting on requests
 	if ss.pendingSeeders.Len() != 0 {
@@ -179,53 +194,68 @@ func (ss *stateSyncer) receivedStateSummaryFrontier() error {
 
 	frontierStake := ss.frontierSeeders.Weight() - failedBeaconWeight
 	if float64(frontierStake) < frontierAlpha {
-		ss.Ctx.Log.Debug("Didn't receive enough frontiers - failed validators: %d, "+
-			"state sync attempt: %d", ss.failedSeeders.Len(), ss.attempts)
+		ss.Ctx.Log.Debug("didn't receive enough frontiers",
+			zap.Int("numFailedValidators", ss.failedSeeders.Len()),
+			zap.Int("numStateSyncAttempts", ss.attempts),
+		)
 
 		if ss.Config.RetryBootstrap {
-			ss.Ctx.Log.Debug("Restarting state sync")
-			return ss.restart()
+			ss.Ctx.Log.Debug("restarting state sync")
+			return ss.restart(ctx)
 		}
 	}
 
 	ss.requestID++
-	ss.sendGetAcceptedStateSummaries()
+	ss.sendGetAcceptedStateSummaries(ctx)
 	return nil
 }
 
-func (ss *stateSyncer) AcceptedStateSummary(validatorID ids.NodeID, requestID uint32, summaryIDs []ids.ID) error {
+func (ss *stateSyncer) AcceptedStateSummary(ctx context.Context, nodeID ids.NodeID, requestID uint32, summaryIDs []ids.ID) error {
 	// ignores any late responses
 	if requestID != ss.requestID {
-		ss.Ctx.Log.Debug("Received an Out-of-Sync Accepted - validator: %v - expectedRequestID: %v, requestID: %v",
-			validatorID, ss.requestID, requestID)
+		ss.Ctx.Log.Debug("received out-of-sync AcceptedStateSummary message",
+			zap.Stringer("nodeID", nodeID),
+			zap.Uint32("expectedRequestID", ss.requestID),
+			zap.Uint32("requestID", requestID),
+		)
 		return nil
 	}
 
-	if !ss.pendingVoters.Contains(validatorID) {
-		ss.Ctx.Log.Debug("Received an AcceptedStateSummary message from %s unexpectedly", validatorID)
+	if !ss.pendingVoters.Contains(nodeID) {
+		ss.Ctx.Log.Debug("received unexpected AcceptedStateSummary message",
+			zap.Stringer("nodeID", nodeID),
+		)
 		return nil
 	}
 
-	// Mark that we received a response from [validatorID]
-	ss.pendingVoters.Remove(validatorID)
+	// Mark that we received a response from [nodeID]
+	ss.pendingVoters.Remove(nodeID)
 
-	weight, _ := ss.StateSyncBeacons.GetWeight(validatorID)
+	weight, _ := ss.StateSyncBeacons.GetWeight(nodeID)
 	for _, summaryID := range summaryIDs {
 		ws, ok := ss.weightedSummaries[summaryID]
 		if !ok {
-			ss.Ctx.Log.Debug("Received a vote from %s for unknown summary %s. Skipped.", validatorID, summaryID)
+			ss.Ctx.Log.Debug("skipping summary",
+				zap.String("reason", "received a vote from validator for unknown summary"),
+				zap.Stringer("nodeID", nodeID),
+				zap.Stringer("summaryID", summaryID),
+			)
 			continue
 		}
 
 		newWeight, err := math.Add64(weight, ws.weight)
 		if err != nil {
-			ss.Ctx.Log.Error("Error calculating the Accepted votes - weight: %v, previousWeight: %v", weight, ws.weight)
+			ss.Ctx.Log.Error("failed to calculate the Accepted votes",
+				zap.Uint64("weight", weight),
+				zap.Uint64("previousWeight", ws.weight),
+				zap.Error(err),
+			)
 			newWeight = stdmath.MaxUint64
 		}
 		ws.weight = newWeight
 	}
 
-	ss.sendGetAcceptedStateSummaries()
+	ss.sendGetAcceptedStateSummaries(ctx)
 
 	// wait on pending responses
 	if ss.pendingVoters.Len() != 0 {
@@ -236,8 +266,10 @@ func (ss *stateSyncer) AcceptedStateSummary(validatorID ids.NodeID, requestID ui
 	// Drop all summaries without a sufficient weight behind them
 	for summaryID, ws := range ss.weightedSummaries {
 		if ws.weight < ss.Alpha {
-			ss.Ctx.Log.Debug("Removing summary %s due to an insufficient weight %d - needed %d",
-				summaryID, ws.weight, ss.Alpha,
+			ss.Ctx.Log.Debug("removing summary",
+				zap.String("reason", "insufficient weight"),
+				zap.Uint64("currentWeight", ws.weight),
+				zap.Uint64("requiredWeight", ss.Alpha),
 			)
 			delete(ss.weightedSummaries, summaryID)
 		}
@@ -259,23 +291,30 @@ func (ss *stateSyncer) AcceptedStateSummary(validatorID ids.NodeID, requestID ui
 		// summaries), so there is no point in retrying state sync; we should move ahead to bootstrapping
 		votingStakes := ss.StateSyncBeacons.Weight() - failedBeaconWeight
 		if ss.Config.RetryBootstrap && votingStakes < ss.Alpha {
-			ss.Ctx.Log.Debug("Not enough votes received, restarting state sync... - Beacons: %d - Failed syncer: %d "+
-				"- state sync attempt: %d", ss.StateSyncBeacons.Len(), ss.failedVoters.Len(), ss.attempts)
-			return ss.restart()
+			ss.Ctx.Log.Debug("restarting state sync",
+				zap.String("reason", "not enough votes received"),
+				zap.Int("numBeacons", ss.StateSyncBeacons.Len()),
+				zap.Int("numFailedSyncers", ss.failedVoters.Len()),
+				zap.Int("numAttempts", ss.attempts),
+			)
+			return ss.restart(ctx)
 		}
 
-		ss.Ctx.Log.Info("No acceptable summaries found, skipping state sync")
+		ss.Ctx.Log.Info("skipping state sync",
+			zap.String("reason", "no acceptable summaries found"),
+		)
 
 		// if we do not restart state sync, move on to bootstrapping.
-		return ss.onDoneStateSyncing(ss.requestID)
+		return ss.onDoneStateSyncing(ctx, ss.requestID)
 	}
 
 	preferredStateSummary := ss.selectSyncableStateSummary()
-	ss.Ctx.Log.Info("Selected summary %s out of %d to start state sync",
-		preferredStateSummary.ID(), size,
+	ss.Ctx.Log.Info("selected summary start state sync",
+		zap.Stringer("summaryID", preferredStateSummary.ID()),
+		zap.Int("numTotalSummaries", size),
 	)
 
-	startedSyncing, err := preferredStateSummary.Accept()
+	startedSyncing, err := preferredStateSummary.Accept(ctx)
 	if err != nil {
 		return err
 	}
@@ -286,7 +325,7 @@ func (ss *stateSyncer) AcceptedStateSummary(validatorID ids.NodeID, requestID ui
 	}
 
 	// VM did not accept the summary, move on to bootstrapping.
-	return ss.onDoneStateSyncing(ss.requestID)
+	return ss.onDoneStateSyncing(ctx, ss.requestID)
 }
 
 // selectSyncableStateSummary chooses a state summary from all
@@ -313,26 +352,30 @@ func (ss *stateSyncer) selectSyncableStateSummary() block.StateSummary {
 	return preferredStateSummary
 }
 
-func (ss *stateSyncer) GetAcceptedStateSummaryFailed(validatorID ids.NodeID, requestID uint32) error {
+func (ss *stateSyncer) GetAcceptedStateSummaryFailed(ctx context.Context, nodeID ids.NodeID, requestID uint32) error {
 	// ignores any late responses
 	if requestID != ss.requestID {
-		ss.Ctx.Log.Debug("Received an Out-of-Sync GetAcceptedStateSummaryFailed - validator: %v - expectedRequestID: %v, requestID: %v",
-			validatorID, ss.requestID, requestID)
+		ss.Ctx.Log.Debug("received out-of-sync GetAcceptedStateSummaryFailed message",
+			zap.Stringer("nodeID", nodeID),
+			zap.Uint32("expectedRequestID", ss.requestID),
+			zap.Uint32("requestID", requestID),
+		)
 		return nil
 	}
 
-	// If we can't get a response from [validatorID], act as though they said
-	// that they think none of the containers we sent them in GetAccepted are accepted
-	ss.failedVoters.Add(validatorID)
+	// If we can't get a response from [nodeID], act as though they said that
+	// they think none of the containers we sent them in GetAccepted are
+	// accepted
+	ss.failedVoters.Add(nodeID)
 
-	return ss.AcceptedStateSummary(validatorID, requestID, nil)
+	return ss.AcceptedStateSummary(ctx, nodeID, requestID, nil)
 }
 
-func (ss *stateSyncer) Start(startReqID uint32) error {
-	ss.Ctx.Log.Info("Starting state sync...")
+func (ss *stateSyncer) Start(ctx context.Context, startReqID uint32) error {
+	ss.Ctx.Log.Info("starting state sync")
 
 	ss.Ctx.SetState(snow.StateSyncing)
-	if err := ss.VM.SetState(snow.StateSyncing); err != nil {
+	if err := ss.VM.SetState(ctx, snow.StateSyncing); err != nil {
 		return fmt.Errorf("failed to notify VM that state syncing has started: %w", err)
 	}
 
@@ -343,15 +386,15 @@ func (ss *stateSyncer) Start(startReqID uint32) error {
 	}
 
 	ss.started = true
-	return ss.startup()
+	return ss.startup(ctx)
 }
 
 // startup do start the whole state sync process by
 // sampling frontier seeders, listing state syncers to request votes to
-// and reaching out frontier seeders if any. Othewise it move immediately
+// and reaching out frontier seeders if any. Otherwise, it moves immediately
 // to bootstrapping. Unlike Start, startup does not check
 // whether sufficient stake amount is connected.
-func (ss *stateSyncer) startup() error {
+func (ss *stateSyncer) startup(ctx context.Context) error {
 	ss.Config.Ctx.Log.Info("starting state sync")
 
 	// clear up messages trackers
@@ -391,7 +434,7 @@ func (ss *stateSyncer) startup() error {
 	// check if there is an ongoing state sync; if so add its state summary
 	// to the frontier to request votes on
 	// Note: database.ErrNotFound means there is no ongoing summary
-	localSummary, err := ss.stateSyncVM.GetOngoingSyncStateSummary()
+	localSummary, err := ss.stateSyncVM.GetOngoingSyncStateSummary(ctx)
 	switch err {
 	case database.ErrNotFound:
 		// no action needed
@@ -412,27 +455,28 @@ func (ss *stateSyncer) startup() error {
 	ss.attempts++
 	if ss.targetSeeders.Len() == 0 {
 		ss.Ctx.Log.Info("State syncing skipped due to no provided syncers")
-		return ss.onDoneStateSyncing(ss.requestID)
+		return ss.onDoneStateSyncing(ctx, ss.requestID)
 	}
 
 	ss.requestID++
-	ss.sendGetStateSummaryFrontiers()
+	ss.sendGetStateSummaryFrontiers(ctx)
 	return nil
 }
 
-func (ss *stateSyncer) restart() error {
+func (ss *stateSyncer) restart(ctx context.Context) error {
 	if ss.attempts > 0 && ss.attempts%ss.RetryBootstrapWarnFrequency == 0 {
-		ss.Ctx.Log.Info("continuing to attempt to state sync after %d failed attempts. Is this node connected to the internet?",
-			ss.attempts)
+		ss.Ctx.Log.Debug("check internet connection",
+			zap.Int("numSyncAttempts", ss.attempts),
+		)
 	}
 
-	return ss.startup()
+	return ss.startup(ctx)
 }
 
 // Ask up to [common.MaxOutstandingBroadcastRequests] state sync validators at a time
 // to send their accepted state summary. It is called again until there are
 // no more seeders to be reached in the pending set
-func (ss *stateSyncer) sendGetStateSummaryFrontiers() {
+func (ss *stateSyncer) sendGetStateSummaryFrontiers(ctx context.Context) {
 	vdrs := ids.NewNodeIDSet(1)
 	for ss.targetSeeders.Len() > 0 && ss.pendingSeeders.Len() < common.MaxOutstandingBroadcastRequests {
 		vdr, _ := ss.targetSeeders.Pop()
@@ -441,14 +485,14 @@ func (ss *stateSyncer) sendGetStateSummaryFrontiers() {
 	}
 
 	if vdrs.Len() > 0 {
-		ss.Sender.SendGetStateSummaryFrontier(vdrs, ss.requestID)
+		ss.Sender.SendGetStateSummaryFrontier(ctx, vdrs, ss.requestID)
 	}
 }
 
 // Ask up to [common.MaxOutstandingStateSyncRequests] syncers validators to send
 // their filtered accepted frontier. It is called again until there are
 // no more voters to be reached in the pending set.
-func (ss *stateSyncer) sendGetAcceptedStateSummaries() {
+func (ss *stateSyncer) sendGetAcceptedStateSummaries(ctx context.Context) {
 	vdrs := ids.NewNodeIDSet(1)
 	for ss.targetVoters.Len() > 0 && ss.pendingVoters.Len() < common.MaxOutstandingBroadcastRequests {
 		vdr, _ := ss.targetVoters.Pop()
@@ -457,38 +501,42 @@ func (ss *stateSyncer) sendGetAcceptedStateSummaries() {
 	}
 
 	if len(vdrs) > 0 {
-		ss.Sender.SendGetAcceptedStateSummary(vdrs, ss.requestID, ss.uniqueSummariesHeights)
-		ss.Ctx.Log.Debug("sent %d more GetAcceptedStateSummary messages with %d more to send",
-			vdrs.Len(), ss.targetVoters.Len())
+		ss.Sender.SendGetAcceptedStateSummary(ctx, vdrs, ss.requestID, ss.uniqueSummariesHeights)
+		ss.Ctx.Log.Debug("sent GetAcceptedStateSummary messages",
+			zap.Int("numSent", vdrs.Len()),
+			zap.Int("numPending", ss.targetVoters.Len()),
+		)
 	}
 }
 
-func (ss *stateSyncer) AppRequest(nodeID ids.NodeID, requestID uint32, deadline time.Time, request []byte) error {
-	return ss.VM.AppRequest(nodeID, requestID, deadline, request)
+func (ss *stateSyncer) AppRequest(ctx context.Context, nodeID ids.NodeID, requestID uint32, deadline time.Time, request []byte) error {
+	return ss.VM.AppRequest(ctx, nodeID, requestID, deadline, request)
 }
 
-func (ss *stateSyncer) AppResponse(nodeID ids.NodeID, requestID uint32, response []byte) error {
-	return ss.VM.AppResponse(nodeID, requestID, response)
+func (ss *stateSyncer) AppResponse(ctx context.Context, nodeID ids.NodeID, requestID uint32, response []byte) error {
+	return ss.VM.AppResponse(ctx, nodeID, requestID, response)
 }
 
-func (ss *stateSyncer) AppRequestFailed(nodeID ids.NodeID, requestID uint32) error {
-	return ss.VM.AppRequestFailed(nodeID, requestID)
+func (ss *stateSyncer) AppRequestFailed(ctx context.Context, nodeID ids.NodeID, requestID uint32) error {
+	return ss.VM.AppRequestFailed(ctx, nodeID, requestID)
 }
 
-func (ss *stateSyncer) Notify(msg common.Message) error {
+func (ss *stateSyncer) Notify(ctx context.Context, msg common.Message) error {
 	if msg != common.StateSyncDone {
-		ss.Ctx.Log.Warn("unexpected message from the VM: %s", msg)
+		ss.Ctx.Log.Warn("received an unexpected message from the VM",
+			zap.Stringer("msg", msg),
+		)
 		return nil
 	}
-	return ss.onDoneStateSyncing(ss.requestID)
+	return ss.onDoneStateSyncing(ctx, ss.requestID)
 }
 
-func (ss *stateSyncer) Connected(nodeID ids.NodeID, nodeVersion *version.Application) error {
-	if err := ss.VM.Connected(nodeID, nodeVersion); err != nil {
+func (ss *stateSyncer) Connected(ctx context.Context, nodeID ids.NodeID, nodeVersion *version.Application) error {
+	if err := ss.VM.Connected(ctx, nodeID, nodeVersion); err != nil {
 		return err
 	}
 
-	if err := ss.StartupTracker.Connected(nodeID, nodeVersion); err != nil {
+	if err := ss.StartupTracker.Connected(ctx, nodeID, nodeVersion); err != nil {
 		return err
 	}
 
@@ -497,30 +545,34 @@ func (ss *stateSyncer) Connected(nodeID ids.NodeID, nodeVersion *version.Applica
 	}
 
 	ss.started = true
-	return ss.startup()
+	return ss.startup(ctx)
 }
 
-func (ss *stateSyncer) Disconnected(nodeID ids.NodeID) error {
-	if err := ss.VM.Disconnected(nodeID); err != nil {
+func (ss *stateSyncer) Disconnected(ctx context.Context, nodeID ids.NodeID) error {
+	if err := ss.VM.Disconnected(ctx, nodeID); err != nil {
 		return err
 	}
 
-	return ss.StartupTracker.Disconnected(nodeID)
+	return ss.StartupTracker.Disconnected(ctx, nodeID)
 }
 
-func (ss *stateSyncer) Gossip() error { return nil }
+func (*stateSyncer) Gossip(context.Context) error {
+	return nil
+}
 
-func (ss *stateSyncer) Shutdown() error {
+func (ss *stateSyncer) Shutdown(ctx context.Context) error {
 	ss.Config.Ctx.Log.Info("shutting down state syncer")
-	return ss.VM.Shutdown()
+	return ss.VM.Shutdown(ctx)
 }
 
-func (ss *stateSyncer) Halt() {}
+func (*stateSyncer) Halt(context.Context) {}
 
-func (ss *stateSyncer) Timeout() error { return nil }
+func (*stateSyncer) Timeout(context.Context) error {
+	return nil
+}
 
-func (ss *stateSyncer) HealthCheck() (interface{}, error) {
-	vmIntf, vmErr := ss.VM.HealthCheck()
+func (ss *stateSyncer) HealthCheck(ctx context.Context) (interface{}, error) {
+	vmIntf, vmErr := ss.VM.HealthCheck(ctx)
 	intf := map[string]interface{}{
 		"consensus": struct{}{},
 		"vm":        vmIntf,
@@ -528,13 +580,15 @@ func (ss *stateSyncer) HealthCheck() (interface{}, error) {
 	return intf, vmErr
 }
 
-func (ss *stateSyncer) GetVM() common.VM { return ss.VM }
+func (ss *stateSyncer) GetVM() common.VM {
+	return ss.VM
+}
 
-func (ss *stateSyncer) IsEnabled() (bool, error) {
+func (ss *stateSyncer) IsEnabled(ctx context.Context) (bool, error) {
 	if ss.stateSyncVM == nil {
 		// state sync is not implemented
 		return false, nil
 	}
 
-	return ss.stateSyncVM.StateSyncEnabled()
+	return ss.stateSyncVM.StateSyncEnabled(ctx)
 }

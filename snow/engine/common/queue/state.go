@@ -1,10 +1,13 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package queue
 
 import (
+	"context"
 	"fmt"
+
+	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/ava-labs/avalanchego/cache"
 	"github.com/ava-labs/avalanchego/cache/metercacher"
@@ -13,7 +16,6 @@ import (
 	"github.com/ava-labs/avalanchego/database/prefixdb"
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/utils/wrappers"
-	"github.com/prometheus/client_golang/prometheus"
 )
 
 const (
@@ -165,7 +167,7 @@ func (s *state) HasRunnableJob() (bool, error) {
 }
 
 // RemoveRunnableJob fetches and deletes the next job from the runnable queue
-func (s *state) RemoveRunnableJob() (Job, error) {
+func (s *state) RemoveRunnableJob(ctx context.Context) (Job, error) {
 	jobIDBytes, err := s.runnableJobIDs.HeadKey()
 	if err != nil {
 		return nil, err
@@ -178,7 +180,7 @@ func (s *state) RemoveRunnableJob() (Job, error) {
 	if err != nil {
 		return nil, fmt.Errorf("couldn't convert job ID bytes to job ID: %w", err)
 	}
-	job, err := s.GetJob(jobID)
+	job, err := s.GetJob(ctx, jobID)
 	if err != nil {
 		return nil, err
 	}
@@ -222,7 +224,7 @@ func (s *state) HasJob(id ids.ID) (bool, error) {
 }
 
 // GetJob returns the job [id]
-func (s *state) GetJob(id ids.ID) (Job, error) {
+func (s *state) GetJob(ctx context.Context, id ids.ID) (Job, error) {
 	if s.cachingEnabled {
 		if job, exists := s.jobsCache.Get(id); exists {
 			return job.(Job), nil
@@ -232,7 +234,7 @@ func (s *state) GetJob(id ids.ID) (Job, error) {
 	if err != nil {
 		return nil, err
 	}
-	job, err := s.parser.Parse(jobBytes)
+	job, err := s.parser.Parse(ctx, jobBytes)
 	if err == nil && s.cachingEnabled {
 		s.jobsCache.Put(id, job)
 	}

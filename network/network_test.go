@@ -1,9 +1,10 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package network
 
 import (
+	"context"
 	"crypto"
 	"net"
 	"sync"
@@ -12,7 +13,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/message"
@@ -138,7 +139,12 @@ func newDefaultTargeter(t tracker.Tracker) tracker.Targeter {
 }
 
 func newDefaultResourceTracker() tracker.ResourceTracker {
-	tracker, err := tracker.NewResourceTracker(prometheus.NewRegistry(), resource.NoUsage, meter.ContinuousFactory{}, 10*time.Second)
+	tracker, err := tracker.NewResourceTracker(
+		prometheus.NewRegistry(),
+		resource.NoUsage,
+		meter.ContinuousFactory{},
+		10*time.Second,
+	)
 	if err != nil {
 		panic(err)
 	}
@@ -171,29 +177,31 @@ func newTestNetwork(t *testing.T, count int) (*testDialer, []*testListener, []id
 
 func newMessageCreator(t *testing.T) message.Creator {
 	t.Helper()
+
 	mc, err := message.NewCreator(
 		prometheus.NewRegistry(),
-		true,
 		"",
+		true,
 		10*time.Second,
 	)
-	assert.NoError(t, err)
+	require.NoError(t, err)
+
 	return mc
 }
 
 func newFullyConnectedTestNetwork(t *testing.T, handlers []router.InboundHandler) ([]ids.NodeID, []Network, *sync.WaitGroup) {
-	assert := assert.New(t)
+	require := require.New(t)
 
 	dialer, listeners, nodeIDs, configs := newTestNetwork(t, len(handlers))
 
 	beacons := validators.NewSet()
 	err := beacons.AddWeight(nodeIDs[0], 1)
-	assert.NoError(err)
+	require.NoError(err)
 
 	vdrs := validators.NewManager()
 	for _, nodeID := range nodeIDs {
 		err := vdrs.AddWeight(constants.PrimaryNetworkID, nodeID, 1)
-		assert.NoError(err)
+		require.NoError(err)
 	}
 
 	msgCreator := newMessageCreator(t)
@@ -228,7 +236,7 @@ func newFullyConnectedTestNetwork(t *testing.T, handlers []router.InboundHandler
 					globalLock.Lock()
 					defer globalLock.Unlock()
 
-					assert.False(connected.Contains(nodeID))
+					require.False(connected.Contains(nodeID))
 					connected.Add(nodeID)
 					numConnected++
 
@@ -243,13 +251,13 @@ func newFullyConnectedTestNetwork(t *testing.T, handlers []router.InboundHandler
 					globalLock.Lock()
 					defer globalLock.Unlock()
 
-					assert.True(connected.Contains(nodeID))
+					require.True(connected.Contains(nodeID))
 					connected.Remove(nodeID)
 					numConnected--
 				},
 			},
 		)
-		assert.NoError(err)
+		require.NoError(err)
 		networks[i] = net
 	}
 
@@ -265,7 +273,7 @@ func newFullyConnectedTestNetwork(t *testing.T, handlers []router.InboundHandler
 			defer wg.Done()
 
 			err := net.Dispatch()
-			assert.NoError(err)
+			require.NoError(err)
 		}(net)
 	}
 
@@ -278,7 +286,6 @@ func newFullyConnectedTestNetwork(t *testing.T, handlers []router.InboundHandler
 
 func TestNewNetwork(t *testing.T) {
 	_, networks, wg := newFullyConnectedTestNetwork(t, []router.InboundHandler{nil, nil, nil})
-
 	for _, net := range networks {
 		net.StartClose()
 	}
@@ -286,19 +293,19 @@ func TestNewNetwork(t *testing.T) {
 }
 
 func TestSend(t *testing.T) {
-	assert := assert.New(t)
+	require := require.New(t)
 
 	received := make(chan message.InboundMessage)
 	nodeIDs, networks, wg := newFullyConnectedTestNetwork(
 		t,
 		[]router.InboundHandler{
-			router.InboundHandlerFunc(func(message.InboundMessage) {
+			router.InboundHandlerFunc(func(context.Context, message.InboundMessage) {
 				t.Fatal("unexpected message received")
 			}),
-			router.InboundHandlerFunc(func(msg message.InboundMessage) {
+			router.InboundHandlerFunc(func(_ context.Context, msg message.InboundMessage) {
 				received <- msg
 			}),
-			router.InboundHandlerFunc(func(message.InboundMessage) {
+			router.InboundHandlerFunc(func(context.Context, message.InboundMessage) {
 				t.Fatal("unexpected message received")
 			}),
 		},
@@ -308,15 +315,15 @@ func TestSend(t *testing.T) {
 
 	mc := newMessageCreator(t)
 	outboundGetMsg, err := mc.Get(ids.Empty, 1, time.Second, ids.Empty)
-	assert.NoError(err)
+	require.NoError(err)
 
 	toSend := ids.NodeIDSet{}
 	toSend.Add(nodeIDs[1])
 	sentTo := net0.Send(outboundGetMsg, toSend, constants.PrimaryNetworkID, false)
-	assert.EqualValues(toSend, sentTo)
+	require.EqualValues(toSend, sentTo)
 
 	inboundGetMsg := <-received
-	assert.Equal(message.Get, inboundGetMsg.Op())
+	require.Equal(message.GetOp, inboundGetMsg.Op())
 
 	for _, net := range networks {
 		net.StartClose()
@@ -325,14 +332,14 @@ func TestSend(t *testing.T) {
 }
 
 func TestTrackVerifiesSignatures(t *testing.T) {
-	assert := assert.New(t)
+	require := require.New(t)
 
 	_, networks, wg := newFullyConnectedTestNetwork(t, []router.InboundHandler{nil})
 
 	network := networks[0].(*network)
 	nodeID, tlsCert, _ := getTLS(t, 1)
 	err := network.config.Validators.AddWeight(constants.PrimaryNetworkID, nodeID, 1)
-	assert.NoError(err)
+	require.NoError(err)
 
 	useful := network.Track(ips.ClaimedIPPort{
 		Cert: tlsCert.Leaf,
@@ -344,10 +351,10 @@ func TestTrackVerifiesSignatures(t *testing.T) {
 		Signature: nil,
 	})
 	// The signature is wrong so this peer tracking info isn't useful.
-	assert.False(useful)
+	require.False(useful)
 
 	network.peersLock.RLock()
-	assert.Empty(network.trackedIPs)
+	require.Empty(network.trackedIPs)
 	network.peersLock.RUnlock()
 
 	for _, net := range networks {

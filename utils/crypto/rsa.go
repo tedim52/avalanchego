@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package crypto
@@ -17,9 +17,9 @@ import (
 var (
 	errWrongKeyType = errors.New("wrong key type")
 
-	_ Factory    = &FactoryRSA{}
-	_ PublicKey  = &PublicKeyRSA{}
-	_ PrivateKey = &PrivateKeyRSA{}
+	_ Factory    = (*FactoryRSA)(nil)
+	_ PublicKey  = (*PublicKeyRSA)(nil)
+	_ PrivateKey = (*PrivateKeyRSA)(nil)
 )
 
 const rsaSize = 3072

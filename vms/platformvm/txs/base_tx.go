@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package txs
@@ -26,14 +26,18 @@ type BaseTx struct {
 	avax.BaseTx `serialize:"true"`
 
 	// true iff this transaction has already passed syntactic verification
-	SyntacticallyVerified bool
+	SyntacticallyVerified bool `json:"-"`
 
 	unsignedBytes []byte // Unsigned byte representation of this data
 }
 
-func (tx *BaseTx) Initialize(unsignedBytes []byte) { tx.unsignedBytes = unsignedBytes }
+func (tx *BaseTx) Initialize(unsignedBytes []byte) {
+	tx.unsignedBytes = unsignedBytes
+}
 
-func (tx *BaseTx) Bytes() []byte { return tx.unsignedBytes }
+func (tx *BaseTx) Bytes() []byte {
+	return tx.unsignedBytes
+}
 
 func (tx *BaseTx) InputIDs() ids.Set {
 	inputIDs := ids.NewSet(len(tx.Ins))
@@ -43,7 +47,9 @@ func (tx *BaseTx) InputIDs() ids.Set {
 	return inputIDs
 }
 
-func (tx *BaseTx) Outputs() []*avax.TransferableOutput { return tx.Outs }
+func (tx *BaseTx) Outputs() []*avax.TransferableOutput {
+	return tx.Outs
+}
 
 // InitCtx sets the FxID fields in the inputs and outputs of this [BaseTx]. Also
 // sets the [ctx] to the given [vm.ctx] so that the addresses can be json

@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package ids
@@ -59,7 +59,9 @@ func (ids *NodeIDSet) Contains(id NodeID) bool {
 }
 
 // Len returns the number of ids in this set
-func (ids NodeIDSet) Len() int { return len(ids) }
+func (ids NodeIDSet) Len() int {
+	return len(ids)
+}
 
 // Remove all the id from this set, if the id isn't in the set, nothing happens
 func (ids *NodeIDSet) Remove(idList ...NodeID) {
@@ -70,7 +72,9 @@ func (ids *NodeIDSet) Remove(idList ...NodeID) {
 }
 
 // Clear empties this set
-func (ids *NodeIDSet) Clear() { *ids = nil }
+func (ids *NodeIDSet) Clear() {
+	*ids = nil
+}
 
 // CappedList returns a list of length at most [size].
 // Size should be >= 0. If size < 0, returns nil.

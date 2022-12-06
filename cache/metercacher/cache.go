@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package metercacher
@@ -10,7 +10,7 @@ import (
 	"github.com/ava-labs/avalanchego/utils/timer/mockable"
 )
 
-var _ cache.Cacher = &Cache{}
+var _ cache.Cacher = (*Cache)(nil)
 
 type Cache struct {
 	metrics

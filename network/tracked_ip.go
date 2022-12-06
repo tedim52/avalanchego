@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package network
@@ -11,7 +11,9 @@ import (
 	"github.com/ava-labs/avalanchego/network/peer"
 )
 
-func init() { rand.Seed(time.Now().UnixNano()) }
+func init() {
+	rand.Seed(time.Now().UnixNano())
+}
 
 type trackedIP struct {
 	delayLock sync.RWMutex

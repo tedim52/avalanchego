@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package crypto
@@ -14,9 +14,9 @@ import (
 )
 
 var (
-	_ Factory    = &FactoryRSAPSS{}
-	_ PublicKey  = &PublicKeyRSAPSS{}
-	_ PrivateKey = &PrivateKeyRSAPSS{}
+	_ Factory    = (*FactoryRSAPSS)(nil)
+	_ PublicKey  = (*PublicKeyRSAPSS)(nil)
+	_ PrivateKey = (*PrivateKeyRSAPSS)(nil)
 )
 
 const rsaPSSSize = 3072

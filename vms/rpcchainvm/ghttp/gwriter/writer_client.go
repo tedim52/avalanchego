@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package gwriter
@@ -11,7 +11,7 @@ import (
 	writerpb "github.com/ava-labs/avalanchego/proto/pb/io/writer"
 )
 
-var _ io.Writer = &Client{}
+var _ io.Writer = (*Client)(nil)
 
 // Client is an io.Writer that talks over RPC.
 type Client struct{ client writerpb.WriterClient }

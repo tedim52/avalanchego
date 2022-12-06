@@ -1,10 +1,12 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package state
 
 import (
 	"time"
+
+	"go.uber.org/zap"
 
 	"github.com/ava-labs/avalanchego/cache"
 	"github.com/ava-labs/avalanchego/database"
@@ -26,7 +28,7 @@ const (
 )
 
 var (
-	_ HeightIndex = &heightIndex{}
+	_ HeightIndex = (*heightIndex)(nil)
 
 	heightPrefix   = []byte("height")
 	metadataPrefix = []byte("metadata")
@@ -143,7 +145,9 @@ func (hi *heightIndex) ResetHeightIndex(log logging.Logger, baseDB versiondb.Com
 				return err
 			}
 
-			log.Info("Deleted %d height entries", deleteCount)
+			log.Info("deleted height index entries",
+				zap.Int("numDeleted", deleteCount),
+			)
 
 			// every deleteBatchSize ops, sleep to avoid clogging the node on this
 			processingDuration := time.Since(processingStart)

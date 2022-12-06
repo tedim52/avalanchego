@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package config
@@ -18,8 +18,8 @@ import (
 
 	"github.com/ava-labs/avalanchego/database/leveldb"
 	"github.com/ava-labs/avalanchego/database/memdb"
-	"github.com/ava-labs/avalanchego/database/rocksdb"
 	"github.com/ava-labs/avalanchego/genesis"
+	"github.com/ava-labs/avalanchego/trace"
 	"github.com/ava-labs/avalanchego/utils/constants"
 	"github.com/ava-labs/avalanchego/utils/ulimit"
 	"github.com/ava-labs/avalanchego/utils/units"
@@ -35,18 +35,20 @@ const (
 
 var (
 	// [defaultUnexpandedDataDir] will be expanded when reading the flags
-	defaultDataDir         = filepath.Join("$HOME", ".avalanchego")
-	defaultDBDir           = filepath.Join(defaultUnexpandedDataDir, "db")
-	defaultLogDir          = filepath.Join(defaultUnexpandedDataDir, "logs")
-	defaultProfileDir      = filepath.Join(defaultUnexpandedDataDir, "profiles")
-	defaultStakingPath     = filepath.Join(defaultUnexpandedDataDir, "staking")
-	defaultStakingKeyPath  = filepath.Join(defaultStakingPath, "staker.key")
-	defaultStakingCertPath = filepath.Join(defaultStakingPath, "staker.crt")
-	defaultConfigDir       = filepath.Join(defaultUnexpandedDataDir, "configs")
-	defaultChainConfigDir  = filepath.Join(defaultConfigDir, "chains")
-	defaultVMConfigDir     = filepath.Join(defaultConfigDir, "vms")
-	defaultVMAliasFilePath = filepath.Join(defaultVMConfigDir, "aliases.json")
-	defaultSubnetConfigDir = filepath.Join(defaultConfigDir, "subnets")
+	defaultDataDir              = filepath.Join("$HOME", ".avalanchego")
+	defaultDBDir                = filepath.Join(defaultUnexpandedDataDir, "db")
+	defaultLogDir               = filepath.Join(defaultUnexpandedDataDir, "logs")
+	defaultProfileDir           = filepath.Join(defaultUnexpandedDataDir, "profiles")
+	defaultStakingPath          = filepath.Join(defaultUnexpandedDataDir, "staking")
+	defaultStakingTLSKeyPath    = filepath.Join(defaultStakingPath, "staker.key")
+	defaultStakingCertPath      = filepath.Join(defaultStakingPath, "staker.crt")
+	defaultStakingSignerKeyPath = filepath.Join(defaultStakingPath, "signer.key")
+	defaultConfigDir            = filepath.Join(defaultUnexpandedDataDir, "configs")
+	defaultChainConfigDir       = filepath.Join(defaultConfigDir, "chains")
+	defaultVMConfigDir          = filepath.Join(defaultConfigDir, "vms")
+	defaultVMAliasFilePath      = filepath.Join(defaultVMConfigDir, "aliases.json")
+	defaultChainAliasFilePath   = filepath.Join(defaultChainConfigDir, "aliases.json")
+	defaultSubnetConfigDir      = filepath.Join(defaultConfigDir, "subnets")
 
 	// Places to look for the build directory
 	defaultBuildDirs = []string{}
@@ -103,10 +105,15 @@ func addNodeFlags(fs *flag.FlagSet) {
 	fs.Uint64(TxFeeKey, genesis.LocalParams.TxFee, "Transaction fee, in nAVAX")
 	fs.Uint64(CreateAssetTxFeeKey, genesis.LocalParams.CreateAssetTxFee, "Transaction fee, in nAVAX, for transactions that create new assets")
 	fs.Uint64(CreateSubnetTxFeeKey, genesis.LocalParams.CreateSubnetTxFee, "Transaction fee, in nAVAX, for transactions that create new subnets")
+	fs.Uint64(TransformSubnetTxFeeKey, genesis.LocalParams.TransformSubnetTxFee, "Transaction fee, in nAVAX, for transactions that transform subnets")
 	fs.Uint64(CreateBlockchainTxFeeKey, genesis.LocalParams.CreateBlockchainTxFee, "Transaction fee, in nAVAX, for transactions that create new blockchains")
+	fs.Uint64(AddPrimaryNetworkValidatorFeeKey, genesis.LocalParams.AddPrimaryNetworkValidatorFee, "Transaction fee, in nAVAX, for transactions that add new primary network validators")
+	fs.Uint64(AddPrimaryNetworkDelegatorFeeKey, genesis.LocalParams.AddPrimaryNetworkDelegatorFee, "Transaction fee, in nAVAX, for transactions that add new primary network delegators")
+	fs.Uint64(AddSubnetValidatorFeeKey, genesis.LocalParams.AddSubnetValidatorFee, "Transaction fee, in nAVAX, for transactions that add new subnet validators")
+	fs.Uint64(AddSubnetDelegatorFeeKey, genesis.LocalParams.AddSubnetDelegatorFee, "Transaction fee, in nAVAX, for transactions that add new subnet delegators")
 
 	// Database
-	fs.String(DBTypeKey, leveldb.Name, fmt.Sprintf("Database type to use. Should be one of {%s, %s, %s}", leveldb.Name, rocksdb.Name, memdb.Name))
+	fs.String(DBTypeKey, leveldb.Name, fmt.Sprintf("Database type to use. Should be one of {%s, %s}", leveldb.Name, memdb.Name))
 	fs.String(DBPathKey, defaultDBDir, "Path to database directory")
 	fs.String(DBConfigFileKey, "", fmt.Sprintf("Path to database config file. Ignored if %s is specified", DBConfigContentKey))
 	fs.String(DBConfigContentKey, "", "Specifies base64 encoded database config content")
@@ -122,12 +129,6 @@ func addNodeFlags(fs *flag.FlagSet) {
 	fs.Bool(LogRotaterCompressEnabledKey, false, "Enables the compression of rotated log files through gzip.")
 	fs.Bool(LogDisableDisplayPluginLogsKey, false, "Disables displaying plugin logs in stdout.")
 
-	// Assertions
-	fs.Bool(AssertionsEnabledKey, true, "Turn on assertion execution")
-
-	// Signature Verification
-	fs.Bool(SignatureVerificationEnabledKey, true, "Turn on signature verification")
-
 	// Peer List Gossip
 	gossipHelpMsg := fmt.Sprintf(
 		"Gossip [%s] validator IPs to [%s] validators, [%s] non-validators, and [%s] validating or non-validating peers every [%s]",
@@ -139,14 +140,12 @@ func addNodeFlags(fs *flag.FlagSet) {
 	)
 	fs.Uint(NetworkPeerListNumValidatorIPsKey, 15, gossipHelpMsg)
 	fs.Uint(NetworkPeerListValidatorGossipSizeKey, 20, gossipHelpMsg)
-	fs.Uint(NetworkPeerListNonValidatorGossipSizeKey, 10, gossipHelpMsg)
-	fs.Uint(NetworkPeerListPeersGossipSizeKey, 0, gossipHelpMsg)
+	fs.Uint(NetworkPeerListNonValidatorGossipSizeKey, 0, gossipHelpMsg)
+	fs.Uint(NetworkPeerListPeersGossipSizeKey, 10, gossipHelpMsg)
 	fs.Duration(NetworkPeerListGossipFreqKey, time.Minute, gossipHelpMsg)
 
 	// Public IP Resolution
 	fs.String(PublicIPKey, "", "Public IP of this node for P2P communication. If empty, try to discover with NAT. Ignored if dynamic-public-ip is non-empty")
-	fs.Duration(DynamicUpdateDurationKey, 5*time.Minute, "Dynamic IP and NAT Traversal update duration")                                                        // Deprecated
-	fs.String(DynamicPublicIPResolverKey, "", "'ifconfigco' (alias 'ifconfig') or 'opendns' or 'ifconfigme'. By default does not do dynamic public IP updates") // Deprecated
 	fs.Duration(PublicIPResolutionFreqKey, 5*time.Minute, "Frequency at which this node resolves/updates its public IP and renew NAT mappings, if applicable")
 	fs.String(PublicIPResolutionServiceKey, "", "Only acceptable values are 'ifconfigco', 'opendns' or 'ifconfigme'. When provided, the node will use that service to periodically resolve/update its public IP")
 
@@ -154,8 +153,8 @@ func addNodeFlags(fs *flag.FlagSet) {
 	fs.Duration(InboundConnUpgradeThrottlerCooldownKey, 10*time.Second, "Upgrade an inbound connection from a given IP at most once per this duration. If 0, don't rate-limit inbound connection upgrades")
 	fs.Float64(InboundThrottlerMaxConnsPerSecKey, 256, "Max number of inbound connections to accept (from all peers) per second")
 	// Outbound Connection Throttling
-	fs.Uint(OutboundConnectionThrottlingRps, 50, "Make at most this number of outgoing peer connection attempts per second")
-	fs.Duration(OutboundConnectionTimeout, 30*time.Second, "Timeout when dialing a peer")
+	fs.Uint(OutboundConnectionThrottlingRpsKey, 50, "Make at most this number of outgoing peer connection attempts per second")
+	fs.Duration(OutboundConnectionTimeoutKey, 30*time.Second, "Timeout when dialing a peer")
 	// Timeouts
 	fs.Duration(NetworkInitialTimeoutKey, 5*time.Second, "Initial timeout value of the adaptive timeout manager")
 	fs.Duration(NetworkMinimumTimeoutKey, 2*time.Second, "Minimum timeout value of the adaptive timeout manager")
@@ -173,6 +172,8 @@ func addNodeFlags(fs *flag.FlagSet) {
 	fs.Bool(NetworkRequireValidatorToConnectKey, false, "If true, this node will only maintain a connection with another node if this node is a validator, the other node is a validator, or the other node is a beacon")
 	fs.Uint(NetworkPeerReadBufferSizeKey, 8*units.KiB, "Size, in bytes, of the buffer that we read peer messages into (there is one buffer per peer)")
 	fs.Uint(NetworkPeerWriteBufferSizeKey, 8*units.KiB, "Size, in bytes, of the buffer that we write peer messages into (there is one buffer per peer)")
+
+	fs.String(NetworkTLSKeyLogFileKey, "", "TLS key log file path. Should only be specified for debugging")
 
 	// Benchlist
 	fs.Int(BenchlistFailThresholdKey, 10, "Number of consecutive failed queries before benchlisting a node")
@@ -249,11 +250,15 @@ func addNodeFlags(fs *flag.FlagSet) {
 	// Staking
 	fs.Uint(StakingPortKey, DefaultStakingPort, "Port of the consensus server")
 	fs.Bool(StakingEnabledKey, true, "Enable staking. If enabled, Network TLS is required")
-	fs.Bool(StakingEphemeralCertEnabledKey, false, "If true, the node uses an ephemeral staking key and certificate, and has an ephemeral node ID")
-	fs.String(StakingKeyPathKey, defaultStakingKeyPath, fmt.Sprintf("Path to the TLS private key for staking. Ignored if %s is specified", StakingKeyContentKey))
-	fs.String(StakingKeyContentKey, "", "Specifies base64 encoded TLS private key for staking")
+	fs.Bool(StakingEphemeralCertEnabledKey, false, "If true, the node uses an ephemeral staking TLS key and certificate, and has an ephemeral node ID")
+	fs.String(StakingTLSKeyPathKey, defaultStakingTLSKeyPath, fmt.Sprintf("Path to the TLS private key for staking. Ignored if %s is specified", StakingTLSKeyContentKey))
+	fs.String(StakingTLSKeyContentKey, "", "Specifies base64 encoded TLS private key for staking")
 	fs.String(StakingCertPathKey, defaultStakingCertPath, fmt.Sprintf("Path to the TLS certificate for staking. Ignored if %s is specified", StakingCertContentKey))
 	fs.String(StakingCertContentKey, "", "Specifies base64 encoded TLS certificate for staking")
+	fs.Bool(StakingEphemeralSignerEnabledKey, false, "If true, the node uses an ephemeral staking signer key")
+	fs.String(StakingSignerKeyPathKey, defaultStakingSignerKeyPath, fmt.Sprintf("Path to the signer private key for staking. Ignored if %s is specified", StakingSignerKeyContentKey))
+	fs.String(StakingSignerKeyContentKey, "", "Specifies base64 encoded signer private key for staking")
+
 	fs.Uint64(StakingDisabledWeightKey, 100, "Weight to provide to each peer when staking is disabled")
 	// Uptime Requirement
 	fs.Float64(UptimeRequirementKey, genesis.LocalParams.UptimeRequirement, "Fraction of time a validator must be online to receive rewards")
@@ -285,7 +290,7 @@ func addNodeFlags(fs *flag.FlagSet) {
 	fs.String(BootstrapIDsKey, "", "Comma separated list of bootstrap peer ids to connect to. Example: NodeID-JR4dVmy6ffUGAKCBDkyCbeZbyHQBeDsET,NodeID-8CrVPQZ4VSqgL8zTdvL14G8HqAfrBr4z")
 	fs.Bool(RetryBootstrapKey, true, "Specifies whether bootstrap should be retried")
 	fs.Int(RetryBootstrapWarnFrequencyKey, 50, "Specifies how many times bootstrap should be retried before warning the operator")
-	fs.Duration(BootstrapBeaconConnectionTimeoutKey, time.Minute, "Timeout when attempting to connect to bootstrapping beacons")
+	fs.Duration(BootstrapBeaconConnectionTimeoutKey, time.Minute, "Timeout before emitting a warn log when connecting to bootstrapping beacons")
 	fs.Duration(BootstrapMaxTimeGetAncestorsKey, 50*time.Millisecond, "Max Time to spend fetching a container and its ancestors when responding to a GetAncestors")
 	fs.Uint(BootstrapAncestorsMaxContainersSentKey, 2000, "Max number of containers in an Ancestors message sent by this node")
 	fs.Uint(BootstrapAncestorsMaxContainersReceivedKey, 2000, "This node reads at most this many containers from an incoming Ancestors message")
@@ -303,6 +308,9 @@ func addNodeFlags(fs *flag.FlagSet) {
 	fs.Duration(SnowMaxTimeProcessingKey, 2*time.Minute, "Maximum amount of time an item should be processing and still be healthy")
 	fs.Uint(SnowMixedQueryNumPushVdrKey, 10, fmt.Sprintf("If this node is a validator, when a container is inserted into consensus, send a Push Query to %s validators and a Pull Query to the others. Must be <= k.", SnowMixedQueryNumPushVdrKey))
 	fs.Uint(SnowMixedQueryNumPushNonVdrKey, 0, fmt.Sprintf("If this node is not a validator, when a container is inserted into consensus, send a Push Query to %s validators and a Pull Query to the others. Must be <= k.", SnowMixedQueryNumPushNonVdrKey))
+
+	// ProposerVM
+	fs.Bool(ProposerVMUseCurrentHeightKey, false, "Have the ProposerVM always report the last accepted P-chain block height")
 
 	// Metrics
 	fs.Bool(MeterVMsEnabledKey, true, "Enable Meter VMs to track VM performance with more granularity")
@@ -327,8 +335,12 @@ func addNodeFlags(fs *flag.FlagSet) {
 	fs.Bool(ProfileContinuousEnabledKey, false, "Whether the app should continuously produce performance profiles")
 	fs.Duration(ProfileContinuousFreqKey, 15*time.Minute, "How frequently to rotate performance profiles")
 	fs.Int(ProfileContinuousMaxFilesKey, 5, "Maximum number of historical profiles to keep")
+
+	// Aliasing
 	fs.String(VMAliasesFileKey, defaultVMAliasFilePath, fmt.Sprintf("Specifies a JSON file that maps vmIDs with custom aliases. Ignored if %s is specified", VMAliasesContentKey))
 	fs.String(VMAliasesContentKey, "", "Specifies base64 encoded maps vmIDs with custom aliases")
+	fs.String(ChainAliasesFileKey, defaultChainAliasFilePath, fmt.Sprintf("Specifies a JSON file that maps blockchainIDs with custom aliases. Ignored if %s is specified", ChainConfigContentKey))
+	fs.String(ChainAliasesContentKey, "", "Specifies base64 encoded map from blockchainID to custom aliases")
 
 	// Delays
 	fs.Duration(NetworkInitialReconnectDelayKey, time.Second, "Initial delay duration must be waited before attempting to reconnect a peer")
@@ -351,6 +363,14 @@ func addNodeFlags(fs *flag.FlagSet) {
 	fs.Float64(DiskVdrAllocKey, 1000*units.GiB, "Maximum number of disk reads/writes per second to allocate for use by validators. Must be > 0")
 	fs.Float64(DiskMaxNonVdrUsageKey, 1000*units.GiB, "Number of disk reads/writes per second that, if fully utilized, will rate limit all non-validators. Must be >= 0")
 	fs.Float64(DiskMaxNonVdrNodeUsageKey, 1000*units.GiB, "Maximum number of disk reads/writes per second that a non-validator can utilize. Must be >= 0")
+
+	// Opentelemetry tracing
+	fs.Bool(TracingEnabledKey, false, "If true, enable opentelemetry tracing")
+	fs.String(TracingExporterTypeKey, trace.GRPC.String(), fmt.Sprintf("Type of exporter to use for tracing. Options are [%s, %s]", trace.GRPC, trace.HTTP))
+	fs.String(TracingEndpointKey, "localhost:4317", "The endpoint to send trace data to")
+	fs.Bool(TracingInsecureKey, true, "If true, don't use TLS when sending trace data")
+	fs.Float64(TracingSampleRateKey, 0.1, "The fraction of traces to sample. If >= 1, always sample. If <= 0, never sample")
+	// TODO add flag to take in headers to send from exporter
 }
 
 // BuildFlagSet returns a complete set of flags for avalanchego

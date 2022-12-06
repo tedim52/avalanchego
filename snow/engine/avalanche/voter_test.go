@@ -1,16 +1,16 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package avalanche
 
 import (
+	"context"
 	"testing"
 
-	"github.com/ava-labs/avalanchego/snow/engine/avalanche/vertex"
-
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/ava-labs/avalanchego/ids"
+	"github.com/ava-labs/avalanchego/snow/engine/avalanche/vertex"
 )
 
 func TestVotingFinishesWithAbandonedDep(t *testing.T) {
@@ -18,8 +18,8 @@ func TestVotingFinishesWithAbandonedDep(t *testing.T) {
 	mngr := vertex.NewTestManager(t)
 	engCfg.Manager = mngr
 	transitive, err := newTransitive(engCfg)
-	assert.NoError(t, err)
-	assert.NoError(t, transitive.Start( /*startReqID*/ 0))
+	require.NoError(t, err)
+	require.NoError(t, transitive.Start(context.Background(), 0 /*=startReqID*/))
 
 	// prepare 3 validators
 	vdr1 := ids.NodeID{1}
@@ -45,7 +45,7 @@ func TestVotingFinishesWithAbandonedDep(t *testing.T) {
 	transitive.polls.Add(2, vdrs)
 
 	// expect 2 pending polls
-	assert.Equal(t, 2, transitive.polls.Len())
+	require.Equal(t, 2, transitive.polls.Len())
 
 	// vote on request 2 first
 	vote1 := ids.GenerateTestID()
@@ -67,11 +67,11 @@ func TestVotingFinishesWithAbandonedDep(t *testing.T) {
 		vdr:       vdr3,
 	}
 
-	voter1.Update()
-	voter3.Update()
+	voter1.Update(context.Background())
+	voter3.Update(context.Background())
 
 	// still expect 2 pending polls since request 1 voting is still pending
-	assert.Equal(t, 2, transitive.polls.Len())
+	require.Equal(t, 2, transitive.polls.Len())
 
 	// vote on request 1
 	// add dependency to voter1's vote which has to be fulfilled prior to finishing
@@ -95,13 +95,13 @@ func TestVotingFinishesWithAbandonedDep(t *testing.T) {
 		vdr:       vdr2,
 	}
 
-	voter1.Update() // does nothing because the dependency is still pending
-	voter2.Update() // voter1 is still remaining with the pending dependency
+	voter1.Update(context.Background()) // does nothing because the dependency is still pending
+	voter2.Update(context.Background()) // voter1 is still remaining with the pending dependency
 
-	voter1.Abandon(voter1Dep) // voter1 abandons dep1
+	voter1.Abandon(context.Background(), voter1Dep) // voter1 abandons dep1
 
 	// expect all polls to have finished
-	assert.Equal(t, 0, transitive.polls.Len())
+	require.Equal(t, 0, transitive.polls.Len())
 }
 
 func TestVotingFinishesWithAbandonDepMiddleRequest(t *testing.T) {
@@ -109,8 +109,8 @@ func TestVotingFinishesWithAbandonDepMiddleRequest(t *testing.T) {
 	mngr := vertex.NewTestManager(t)
 	engCfg.Manager = mngr
 	transitive, err := newTransitive(engCfg)
-	assert.NoError(t, err)
-	assert.NoError(t, transitive.Start( /*startReqID*/ 0))
+	require.NoError(t, err)
+	require.NoError(t, transitive.Start(context.Background(), 0 /*=startReqID*/))
 
 	// prepare 3 validators
 	vdr1 := ids.NodeID{1}
@@ -145,7 +145,7 @@ func TestVotingFinishesWithAbandonDepMiddleRequest(t *testing.T) {
 	transitive.polls.Add(3, vdrs)
 
 	// expect 3 pending polls
-	assert.Equal(t, 3, transitive.polls.Len())
+	require.Equal(t, 3, transitive.polls.Len())
 
 	vote1 := ids.GenerateTestID()
 	vote2 := ids.GenerateTestID()
@@ -168,11 +168,11 @@ func TestVotingFinishesWithAbandonDepMiddleRequest(t *testing.T) {
 		vdr:       vdr2,
 	}
 
-	req3Voter1.Update()
-	req3Voter2.Update()
+	req3Voter1.Update(context.Background())
+	req3Voter2.Update(context.Background())
 
 	// expect 3 pending polls since 2 and 1 are still pending
-	assert.Equal(t, 3, transitive.polls.Len())
+	require.Equal(t, 3, transitive.polls.Len())
 
 	// vote on request 2
 	// add dependency to req2/voter3's vote which has to be fulfilled prior to finishing
@@ -196,11 +196,11 @@ func TestVotingFinishesWithAbandonDepMiddleRequest(t *testing.T) {
 		vdr:       vdr3,
 	}
 
-	req2Voter1.Update() // does nothing because dep is unfulfilled
-	req2Voter2.Update()
+	req2Voter1.Update(context.Background()) // does nothing because dep is unfulfilled
+	req2Voter2.Update(context.Background())
 
 	// still expect 3 pending polls since request 1 voting is still pending
-	assert.Equal(t, 3, transitive.polls.Len())
+	require.Equal(t, 3, transitive.polls.Len())
 
 	// vote on request 1
 	// add dependency to voter1's vote which has to be fulfilled prior to finishing
@@ -223,19 +223,19 @@ func TestVotingFinishesWithAbandonDepMiddleRequest(t *testing.T) {
 		vdr:       vdr2,
 	}
 
-	req1Voter1.Update() // does nothing because the req2/voter1 dependency is still pending
-	req1Voter2.Update() // voter1 is still remaining with the pending dependency
+	req1Voter1.Update(context.Background()) // does nothing because the req2/voter1 dependency is still pending
+	req1Voter2.Update(context.Background()) // voter1 is still remaining with the pending dependency
 
 	// abandon dep on voter3
-	req2Voter2.Abandon(req2Voter2Dep) // voter3 abandons dep1
+	req2Voter2.Abandon(context.Background(), req2Voter2Dep) // voter3 abandons dep1
 
 	// expect polls to be pending as req1/voter1's dep is still unfulfilled
-	assert.Equal(t, 3, transitive.polls.Len())
+	require.Equal(t, 3, transitive.polls.Len())
 
-	req1Voter1.Abandon(req1Voter1Dep)
+	req1Voter1.Abandon(context.Background(), req1Voter1Dep)
 
 	// expect all polls to have finished
-	assert.Equal(t, 0, transitive.polls.Len())
+	require.Equal(t, 0, transitive.polls.Len())
 }
 
 func TestSharedDependency(t *testing.T) {
@@ -243,8 +243,8 @@ func TestSharedDependency(t *testing.T) {
 	mngr := vertex.NewTestManager(t)
 	engCfg.Manager = mngr
 	transitive, err := newTransitive(engCfg)
-	assert.NoError(t, err)
-	assert.NoError(t, transitive.Start( /*startReqID*/ 0))
+	require.NoError(t, err)
+	require.NoError(t, transitive.Start(context.Background(), 0 /*=startReqID*/))
 
 	// prepare 3 validators
 	vdr1 := ids.NodeID{1}
@@ -279,7 +279,7 @@ func TestSharedDependency(t *testing.T) {
 	transitive.polls.Add(3, vdrs)
 
 	// expect 3 pending polls
-	assert.Equal(t, 3, transitive.polls.Len())
+	require.Equal(t, 3, transitive.polls.Len())
 
 	vote1 := ids.GenerateTestID()
 	vote2 := ids.GenerateTestID()
@@ -295,7 +295,7 @@ func TestSharedDependency(t *testing.T) {
 		vdr:       vdr3,
 	}
 
-	req3Voter1.Update()
+	req3Voter1.Update(context.Background())
 
 	req3Voter2 := &voter{
 		t:         transitive,
@@ -305,10 +305,10 @@ func TestSharedDependency(t *testing.T) {
 		vdr:       vdr2,
 	}
 
-	req3Voter2.Update()
+	req3Voter2.Update(context.Background())
 
 	// 3 polls pending because req 2 and 1 have not voted
-	assert.Equal(t, 3, transitive.polls.Len())
+	require.Equal(t, 3, transitive.polls.Len())
 
 	// setup common dependency
 	dep := ids.GenerateTestID()
@@ -324,7 +324,7 @@ func TestSharedDependency(t *testing.T) {
 	}
 
 	// does nothing because dependency is unfulfilled
-	req2Voter1.Update()
+	req2Voter1.Update(context.Background())
 
 	req2Voter2 := &voter{
 		t:         transitive,
@@ -334,10 +334,10 @@ func TestSharedDependency(t *testing.T) {
 		vdr:       vdr3,
 	}
 
-	req2Voter2.Update()
+	req2Voter2.Update(context.Background())
 
 	// 3 polls pending as req 2 dependency is unfulfilled and 1 has not voted
-	assert.Equal(t, 3, transitive.polls.Len())
+	require.Equal(t, 3, transitive.polls.Len())
 
 	req1Voter1 := &voter{
 		t:         transitive,
@@ -348,7 +348,7 @@ func TestSharedDependency(t *testing.T) {
 	}
 
 	// does nothing because dependency is unfulfilled
-	req1Voter1.Update()
+	req1Voter1.Update(context.Background())
 
 	req1Voter2 := &voter{
 		t:         transitive,
@@ -358,15 +358,15 @@ func TestSharedDependency(t *testing.T) {
 		vdr:       vdr2,
 	}
 
-	req1Voter2.Update()
+	req1Voter2.Update(context.Background())
 
 	// 3 polls pending as req2 and req 1 dependencies are unfulfilled
-	assert.Equal(t, 3, transitive.polls.Len())
+	require.Equal(t, 3, transitive.polls.Len())
 
 	// abandon dependency
-	req1Voter1.Abandon(dep)
-	req2Voter1.Abandon(dep)
+	req1Voter1.Abandon(context.Background(), dep)
+	req2Voter1.Abandon(context.Background(), dep)
 
 	// expect no pending polls
-	assert.Equal(t, 0, transitive.polls.Len())
+	require.Equal(t, 0, transitive.polls.Len())
 }

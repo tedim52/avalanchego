@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package pubsub
@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+
+	"go.uber.org/zap"
 
 	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/avalanchego/utils/units"
@@ -50,7 +52,9 @@ type errorMsg struct {
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:  readBufferSize,
 	WriteBufferSize: writeBufferSize,
-	CheckOrigin:     func(*http.Request) bool { return true },
+	CheckOrigin: func(*http.Request) bool {
+		return true
+	},
 }
 
 // Server maintains the set of active clients and sends messages to the clients.
@@ -63,7 +67,7 @@ type Server struct {
 	subscribedConnections *connections
 }
 
-func New(networkID uint32, log logging.Logger) *Server {
+func New(log logging.Logger) *Server {
 	return &Server{
 		log:                   log,
 		conns:                 make(map[*connection]struct{}),
@@ -74,7 +78,9 @@ func New(networkID uint32, log logging.Logger) *Server {
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	wsConn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		s.log.Debug("Failed to upgrade %s", err)
+		s.log.Debug("failed to upgrade",
+			zap.Error(err),
+		)
 		return
 	}
 	conn := &connection{

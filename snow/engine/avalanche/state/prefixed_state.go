@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package state
@@ -87,7 +87,9 @@ func (s *prefixedState) SetStatus(id ids.ID, status choices.Status) error {
 	return s.state.SetStatus(sID, status)
 }
 
-func (s *prefixedState) Edge() []ids.ID { return s.state.Edge(uniqueEdgeID) }
+func (s *prefixedState) Edge() []ids.ID {
+	return s.state.Edge(uniqueEdgeID)
+}
 
 func (s *prefixedState) SetEdge(frontier []ids.ID) error {
 	return s.state.SetEdge(uniqueEdgeID, frontier)

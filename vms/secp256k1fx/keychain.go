@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package secp256k1fx
@@ -10,11 +10,16 @@ import (
 
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/utils/crypto"
+	"github.com/ava-labs/avalanchego/utils/crypto/keychain"
 	"github.com/ava-labs/avalanchego/utils/formatting"
 	"github.com/ava-labs/avalanchego/vms/components/verify"
 )
 
-var errCantSpend = errors.New("unable to spend this UTXO")
+var (
+	errCantSpend = errors.New("unable to spend this UTXO")
+
+	_ keychain.Keychain = (*Keychain)(nil)
+)
 
 // Keychain is a collection of keys that can be used to spend outputs
 type Keychain struct {
@@ -48,16 +53,16 @@ func (kc *Keychain) Add(key *crypto.PrivateKeySECP256K1R) {
 	}
 }
 
-// Get a key from the keychain. If the key is unknown, the
-func (kc Keychain) Get(id ids.ShortID) (*crypto.PrivateKeySECP256K1R, bool) {
-	if i, ok := kc.addrToKeyIndex[id]; ok {
-		return kc.Keys[i], true
-	}
-	return &crypto.PrivateKeySECP256K1R{}, false
+// Get a key from the keychain. If the key is unknown, return a pointer to an empty key.
+// In both cases also return a boolean telling whether the key is known.
+func (kc Keychain) Get(id ids.ShortID) (keychain.Signer, bool) {
+	return kc.get(id)
 }
 
 // Addresses returns a list of addresses this keychain manages
-func (kc Keychain) Addresses() ids.ShortSet { return kc.Addrs }
+func (kc Keychain) Addresses() ids.ShortSet {
+	return kc.Addrs
+}
 
 // New returns a newly generated private key
 func (kc *Keychain) New() (*crypto.PrivateKeySECP256K1R, error) {
@@ -103,7 +108,7 @@ func (kc *Keychain) Match(owners *OutputOwners, time uint64) ([]uint32, []*crypt
 	sigs := make([]uint32, 0, owners.Threshold)
 	keys := make([]*crypto.PrivateKeySECP256K1R, 0, owners.Threshold)
 	for i := uint32(0); i < uint32(len(owners.Addrs)) && uint32(len(keys)) < owners.Threshold; i++ {
-		if key, exists := kc.Get(owners.Addrs[i]); exists {
+		if key, exists := kc.get(owners.Addrs[i]); exists {
 			sigs = append(sigs, i)
 			keys = append(keys, key)
 		}
@@ -114,21 +119,32 @@ func (kc *Keychain) Match(owners *OutputOwners, time uint64) ([]uint32, []*crypt
 // PrefixedString returns the key chain as a string representation with [prefix]
 // added before every line.
 func (kc *Keychain) PrefixedString(prefix string) string {
-	s := strings.Builder{}
+	sb := strings.Builder{}
 	format := fmt.Sprintf("%%sKey[%s]: Key: %%s Address: %%s\n",
 		formatting.IntFormat(len(kc.Keys)-1))
 	for i, key := range kc.Keys {
 		// We assume that the maximum size of a byte slice that
 		// can be stringified is at least the length of a SECP256K1 private key
 		keyStr, _ := formatting.Encode(formatting.HexNC, key.Bytes())
-		s.WriteString(fmt.Sprintf(format,
+		sb.WriteString(fmt.Sprintf(format,
 			prefix,
 			i,
 			keyStr,
-			key.PublicKey().Address()))
+			key.PublicKey().Address(),
+		))
 	}
 
-	return strings.TrimSuffix(s.String(), "\n")
+	return strings.TrimSuffix(sb.String(), "\n")
 }
 
-func (kc *Keychain) String() string { return kc.PrefixedString("") }
+func (kc *Keychain) String() string {
+	return kc.PrefixedString("")
+}
+
+// to avoid internals type assertions
+func (kc Keychain) get(id ids.ShortID) (*crypto.PrivateKeySECP256K1R, bool) {
+	if i, ok := kc.addrToKeyIndex[id]; ok {
+		return kc.Keys[i], true
+	}
+	return nil, false
+}

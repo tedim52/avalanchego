@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package state
@@ -20,7 +20,7 @@ const cacheSize = 1000
 var (
 	errWrongType = errors.New("value in the database was the wrong type")
 
-	_ State = &state{}
+	_ State = (*state)(nil)
 )
 
 // State is a key-value store where every value is associated with a "type ID".
@@ -176,13 +176,13 @@ func (s *state) PutID(db database.Database, key ids.ID, id ids.ID) error {
 
 // GetID gets the ID associated with [key] in [db]
 func (s *state) GetID(db database.Database, key ids.ID) (ids.ID, error) {
-	IDInterface, err := s.Get(db, IDTypeID, key)
+	idIntf, err := s.Get(db, IDTypeID, key)
 	if err != nil {
 		return ids.ID{}, err
 	}
 
-	if ID, ok := IDInterface.(ids.ID); ok {
-		return ID, nil
+	if id, ok := idIntf.(ids.ID); ok {
+		return id, nil
 	}
 
 	return ids.ID{}, errWrongType

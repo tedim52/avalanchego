@@ -1,10 +1,11 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package leveldb
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -19,6 +20,8 @@ import (
 	"github.com/syndtr/goleveldb/leveldb/iterator"
 	"github.com/syndtr/goleveldb/leveldb/opt"
 	"github.com/syndtr/goleveldb/leveldb/util"
+
+	"go.uber.org/zap"
 
 	"github.com/ava-labs/avalanchego/database"
 	"github.com/ava-labs/avalanchego/utils"
@@ -61,9 +64,9 @@ const (
 )
 
 var (
-	_ database.Database = &Database{}
-	_ database.Batch    = &batch{}
-	_ database.Iterator = &iter{}
+	_ database.Database = (*Database)(nil)
+	_ database.Batch    = (*batch)(nil)
+	_ database.Iterator = (*iter)(nil)
 )
 
 // Database is a persistent key-value store. Apart from basic data storage
@@ -78,6 +81,10 @@ type Database struct {
 	closeOnce sync.Once
 	// closeCh is closed when Close() is called.
 	closeCh chan struct{}
+	// closeWg is used to wait for all goroutines created by New() to exit.
+	// This avoids racy behavior when Close() is called at the same time as
+	// Stats(). See: https://github.com/syndtr/goleveldb/issues/418
+	closeWg sync.WaitGroup
 }
 
 type config struct {
@@ -192,11 +199,10 @@ func New(file string, configBytes []byte, log logging.Logger, namespace string, 
 			return nil, fmt.Errorf("failed to parse db config: %w", err)
 		}
 	}
-	configJSON, err := json.Marshal(&parsedConfig)
-	if err != nil {
-		return nil, err
-	}
-	log.Info("leveldb config: %s", string(configJSON))
+
+	log.Info("creating leveldb",
+		zap.Reflect("config", parsedConfig),
+	)
 
 	// Open the db and recover any potential corruptions
 	db, err := leveldb.OpenFile(file, &opt.Options{
@@ -235,14 +241,19 @@ func New(file string, configBytes []byte, log logging.Logger, namespace string, 
 			return nil, err
 		}
 		wrappedDB.metrics = metrics
+		wrappedDB.closeWg.Add(1)
 		go func() {
 			t := time.NewTicker(parsedConfig.MetricUpdateFrequency)
-			defer t.Stop()
+			defer func() {
+				t.Stop()
+				wrappedDB.closeWg.Done()
+			}()
 
 			for {
-				err := wrappedDB.updateMetrics()
-				if !wrappedDB.closed.GetValue() && err != nil {
-					log.Warn("failed to update leveldb metrics: %s", err)
+				if err := wrappedDB.updateMetrics(); err != nil {
+					log.Warn("failed to update leveldb metrics",
+						zap.Error(err),
+					)
 				}
 
 				select {
@@ -280,7 +291,9 @@ func (db *Database) Delete(key []byte) error {
 
 // NewBatch creates a write/delete-only buffer that is atomically committed to
 // the database when write is called
-func (db *Database) NewBatch() database.Batch { return &batch{db: db} }
+func (db *Database) NewBatch() database.Batch {
+	return &batch{db: db}
+}
 
 // NewIterator creates a lexicographically ordered iterator over the database
 func (db *Database) NewIterator() database.Iterator {
@@ -342,10 +355,11 @@ func (db *Database) Close() error {
 	db.closeOnce.Do(func() {
 		close(db.closeCh)
 	})
+	db.closeWg.Wait()
 	return updateError(db.DB.Close())
 }
 
-func (db *Database) HealthCheck() (interface{}, error) {
+func (db *Database) HealthCheck(context.Context) (interface{}, error) {
 	if db.closed.GetValue() {
 		return nil, database.ErrClosed
 	}
@@ -374,7 +388,9 @@ func (b *batch) Delete(key []byte) error {
 }
 
 // Size retrieves the amount of data queued up for writing.
-func (b *batch) Size() int { return b.size }
+func (b *batch) Size() int {
+	return b.size
+}
 
 // Write flushes any accumulated data to disk.
 func (b *batch) Write() error {
@@ -398,7 +414,9 @@ func (b *batch) Replay(w database.KeyValueWriterDeleter) error {
 }
 
 // Inner returns itself
-func (b *batch) Inner() database.Batch { return b }
+func (b *batch) Inner() database.Batch {
+	return b
+}
 
 type replayer struct {
 	writerDeleter database.KeyValueWriterDeleter
@@ -454,9 +472,13 @@ func (it *iter) Error() error {
 	return updateError(it.Iterator.Error())
 }
 
-func (it *iter) Key() []byte { return it.key }
+func (it *iter) Key() []byte {
+	return it.key
+}
 
-func (it *iter) Value() []byte { return it.val }
+func (it *iter) Value() []byte {
+	return it.val
+}
 
 func updateError(err error) error {
 	switch err {

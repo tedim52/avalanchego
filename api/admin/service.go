@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package admin
@@ -10,11 +10,14 @@ import (
 
 	"github.com/gorilla/rpc/v2"
 
+	"go.uber.org/zap"
+
 	"github.com/ava-labs/avalanchego/api"
 	"github.com/ava-labs/avalanchego/api/server"
 	"github.com/ava-labs/avalanchego/chains"
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/snow/engine/common"
+	"github.com/ava-labs/avalanchego/utils"
 	"github.com/ava-labs/avalanchego/utils/constants"
 	"github.com/ava-labs/avalanchego/utils/json"
 	"github.com/ava-labs/avalanchego/utils/logging"
@@ -105,7 +108,10 @@ type AliasArgs struct {
 
 // Alias attempts to alias an HTTP endpoint to a new name
 func (service *Admin) Alias(_ *http.Request, args *AliasArgs, _ *api.EmptyReply) error {
-	service.Log.Debug("Admin: Alias called with URL: %s, Alias: %s", args.Endpoint, args.Alias)
+	service.Log.Debug("Admin: Alias called",
+		logging.UserString("endpoint", args.Endpoint),
+		logging.UserString("alias", args.Alias),
+	)
 
 	if len(args.Alias) > maxAliasLength {
 		return errAliasTooLong
@@ -122,7 +128,10 @@ type AliasChainArgs struct {
 
 // AliasChain attempts to alias a chain to a new name
 func (service *Admin) AliasChain(_ *http.Request, args *AliasChainArgs, _ *api.EmptyReply) error {
-	service.Log.Debug("Admin: AliasChain called with Chain: %s, Alias: %s", args.Chain, args.Alias)
+	service.Log.Debug("Admin: AliasChain called",
+		logging.UserString("chain", args.Chain),
+		logging.UserString("alias", args.Alias),
+	)
 
 	if len(args.Alias) > maxAliasLength {
 		return errAliasTooLong
@@ -153,7 +162,9 @@ type GetChainAliasesReply struct {
 
 // GetChainAliases returns the aliases of the chain
 func (service *Admin) GetChainAliases(_ *http.Request, args *GetChainAliasesArgs, reply *GetChainAliasesReply) error {
-	service.Log.Debug("Admin: GetChainAliases called with Chain: %s", args.Chain)
+	service.Log.Debug("Admin: GetChainAliases called",
+		logging.UserString("chain", args.Chain),
+	)
 
 	id, err := ids.FromString(args.Chain)
 	if err != nil {
@@ -168,7 +179,7 @@ func (service *Admin) GetChainAliases(_ *http.Request, args *GetChainAliasesArgs
 func (service *Admin) Stacktrace(_ *http.Request, _ *struct{}, _ *api.EmptyReply) error {
 	service.Log.Debug("Admin: Stacktrace called")
 
-	stacktrace := []byte(logging.Stacktrace{Global: true}.String())
+	stacktrace := []byte(utils.GetStacktrace(true))
 	return perms.WriteFile(stacktraceFile, stacktrace, perms.ReadWrite)
 }
 
@@ -188,8 +199,12 @@ type SetLoggerLevelArgs struct {
 // Sets the display level of these loggers to args.LogLevel.
 // If args.DisplayLevel == nil, doesn't set the display level of these loggers.
 // If args.DisplayLevel != nil, must be a valid string representation of a log level.
-func (service *Admin) SetLoggerLevel(_ *http.Request, args *SetLoggerLevelArgs, reply *api.EmptyReply) error {
-	service.Log.Debug("Admin: SetLoggerLevel called with LoggerName: %q, LogLevel: %q, DisplayLevel: %q", args.LoggerName, args.LogLevel, args.DisplayLevel)
+func (service *Admin) SetLoggerLevel(_ *http.Request, args *SetLoggerLevelArgs, _ *api.EmptyReply) error {
+	service.Log.Debug("Admin: SetLoggerLevel called",
+		logging.UserString("loggerName", args.LoggerName),
+		zap.Stringer("logLevel", args.LogLevel),
+		zap.Stringer("displayLevel", args.DisplayLevel),
+	)
 
 	if args.LogLevel == nil && args.DisplayLevel == nil {
 		return errNoLogLevel
@@ -235,7 +250,9 @@ type GetLoggerLevelReply struct {
 
 // GetLogLevel returns the log level and display level of all loggers.
 func (service *Admin) GetLoggerLevel(_ *http.Request, args *GetLoggerLevelArgs, reply *GetLoggerLevelReply) error {
-	service.Log.Debug("Admin: GetLoggerLevels called with LoggerName: %q", args.LoggerName)
+	service.Log.Debug("Admin: GetLoggerLevels called",
+		logging.UserString("loggerName", args.LoggerName),
+	)
 	reply.LoggerLevels = make(map[string]LogAndDisplayLevels)
 	var loggerNames []string
 	// Empty name means all loggers
@@ -263,7 +280,7 @@ func (service *Admin) GetLoggerLevel(_ *http.Request, args *GetLoggerLevelArgs, 
 }
 
 // GetConfig returns the config that the node was started with.
-func (service *Admin) GetConfig(_ *http.Request, args *struct{}, reply *interface{}) error {
+func (service *Admin) GetConfig(_ *http.Request, _ *struct{}, reply *interface{}) error {
 	service.Log.Debug("Admin: GetConfig called")
 	*reply = service.NodeConfig
 	return nil
@@ -278,10 +295,11 @@ type LoadVMsReply struct {
 }
 
 // LoadVMs loads any new VMs available to the node and returns the added VMs.
-func (service *Admin) LoadVMs(_ *http.Request, _ *struct{}, reply *LoadVMsReply) error {
+func (service *Admin) LoadVMs(r *http.Request, _ *struct{}, reply *LoadVMsReply) error {
 	service.Log.Debug("Admin: LoadVMs called")
 
-	loadedVMs, failedVMs, err := service.VMRegistry.ReloadWithReadLock()
+	ctx := r.Context()
+	loadedVMs, failedVMs, err := service.VMRegistry.ReloadWithReadLock(ctx)
 	if err != nil {
 		return err
 	}

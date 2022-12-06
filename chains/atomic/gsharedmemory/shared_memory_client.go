@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package gsharedmemory
@@ -24,7 +24,7 @@ const (
 	baseElementSize = 8 // bytes
 )
 
-var _ atomic.SharedMemory = &Client{}
+var _ atomic.SharedMemory = (*Client)(nil)
 
 // Client is atomic.SharedMemory that talks over RPC.
 type Client struct {

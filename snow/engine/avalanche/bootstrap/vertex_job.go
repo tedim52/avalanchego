@@ -1,13 +1,16 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package bootstrap
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
 	"github.com/prometheus/client_golang/prometheus"
+
+	"go.uber.org/zap"
 
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/snow/choices"
@@ -25,8 +28,8 @@ type vtxParser struct {
 	manager                 vertex.Manager
 }
 
-func (p *vtxParser) Parse(vtxBytes []byte) (queue.Job, error) {
-	vtx, err := p.manager.ParseVtx(vtxBytes)
+func (p *vtxParser) Parse(ctx context.Context, vtxBytes []byte) (queue.Job, error) {
+	vtx, err := p.manager.ParseVtx(ctx, vtxBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -44,9 +47,11 @@ type vertexJob struct {
 	vtx                     avalanche.Vertex
 }
 
-func (v *vertexJob) ID() ids.ID { return v.vtx.ID() }
+func (v *vertexJob) ID() ids.ID {
+	return v.vtx.ID()
+}
 
-func (v *vertexJob) MissingDependencies() (ids.Set, error) {
+func (v *vertexJob) MissingDependencies(context.Context) (ids.Set, error) {
 	missing := ids.Set{}
 	parents, err := v.vtx.Parents()
 	if err != nil {
@@ -61,7 +66,7 @@ func (v *vertexJob) MissingDependencies() (ids.Set, error) {
 }
 
 // Returns true if this vertex job has at least 1 missing dependency
-func (v *vertexJob) HasMissingDependencies() (bool, error) {
+func (v *vertexJob) HasMissingDependencies(context.Context) (bool, error) {
 	parents, err := v.vtx.Parents()
 	if err != nil {
 		return false, err
@@ -74,8 +79,8 @@ func (v *vertexJob) HasMissingDependencies() (bool, error) {
 	return false, nil
 }
 
-func (v *vertexJob) Execute() error {
-	hasMissingDependencies, err := v.HasMissingDependencies()
+func (v *vertexJob) Execute(ctx context.Context) error {
+	hasMissingDependencies, err := v.HasMissingDependencies(ctx)
 	if err != nil {
 		return err
 	}
@@ -83,7 +88,7 @@ func (v *vertexJob) Execute() error {
 		v.numDropped.Inc()
 		return errMissingVtxDependenciesOnAccept
 	}
-	txs, err := v.vtx.Txs()
+	txs, err := v.vtx.Txs(ctx)
 	if err != nil {
 		return err
 	}
@@ -101,12 +106,16 @@ func (v *vertexJob) Execute() error {
 		return fmt.Errorf("attempting to execute vertex with status %s", status)
 	case choices.Processing:
 		v.numAccepted.Inc()
-		v.log.Trace("accepting vertex %s in bootstrapping", v.vtx.ID())
-		if err := v.vtx.Accept(); err != nil {
+		v.log.Trace("accepting vertex in bootstrapping",
+			zap.Stringer("vtxID", v.vtx.ID()),
+		)
+		if err := v.vtx.Accept(ctx); err != nil {
 			return fmt.Errorf("failed to accept vertex in bootstrapping: %w", err)
 		}
 	}
 	return nil
 }
 
-func (v *vertexJob) Bytes() []byte { return v.vtx.Bytes() }
+func (v *vertexJob) Bytes() []byte {
+	return v.vtx.Bytes()
+}

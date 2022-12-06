@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package builder
@@ -27,13 +27,12 @@ import (
 const MaxPageSize = 1024
 
 var (
-	_ TxBuilder = &builder{}
+	_ Builder = (*builder)(nil)
 
 	errNoFunds = errors.New("no spendable funds were found")
 )
 
-// TODO: TxBuilder should be replaced by the P-chain wallet
-type TxBuilder interface {
+type Builder interface {
 	AtomicTxBuilder
 	DecisionTxBuilder
 	ProposalTxBuilder
@@ -149,6 +148,17 @@ type ProposalTxBuilder interface {
 		changeAddr ids.ShortID,
 	) (*txs.Tx, error)
 
+	// Creates a transaction that removes [nodeID]
+	// as a validator from [subnetID]
+	// keys: keys to use for removing the validator
+	// changeAddr: address to send change to, if there is any
+	NewRemoveSubnetValidatorTx(
+		nodeID ids.NodeID,
+		subnetID ids.ID,
+		keys []*crypto.PrivateKeySECP256K1R,
+		changeAddr ids.ShortID,
+	) (*txs.Tx, error)
+
 	// newAdvanceTimeTx creates a new tx that, if it is accepted and followed by a
 	// Commit block, will set the chain's timestamp to [timestamp].
 	NewAdvanceTimeTx(timestamp time.Time) (*txs.Tx, error)
@@ -158,15 +168,15 @@ type ProposalTxBuilder interface {
 	NewRewardValidatorTx(txID ids.ID) (*txs.Tx, error)
 }
 
-func NewTxBuilder(
+func New(
 	ctx *snow.Context,
-	cfg config.Config,
+	cfg *config.Config,
 	clk *mockable.Clock,
 	fx fx.Fx,
 	state state.Chain,
 	atomicUTXOManager avax.AtomicUTXOManager,
 	utxoSpender utxo.Spender,
-) TxBuilder {
+) Builder {
 	return &builder{
 		AtomicUTXOManager: atomicUTXOManager,
 		Spender:           utxoSpender,
@@ -183,7 +193,7 @@ type builder struct {
 	utxo.Spender
 	state state.Chain
 
-	cfg config.Config
+	cfg *config.Config
 	ctx *snow.Context
 	clk *mockable.Clock
 	fx  fx.Fx
@@ -205,12 +215,9 @@ func (b *builder) NewImportTx(
 	importedInputs := []*avax.TransferableInput{}
 	signers := [][]*crypto.PrivateKeySECP256K1R{}
 
-	importedAmount := uint64(0)
+	importedAmounts := make(map[ids.ID]uint64)
 	now := b.clk.Unix()
 	for _, utxo := range atomicUTXOs {
-		if utxo.AssetID() != b.ctx.AVAXAssetID {
-			continue
-		}
 		inputIntf, utxoSigners, err := kc.Spend(utxo.Out, now)
 		if err != nil {
 			continue
@@ -219,7 +226,8 @@ func (b *builder) NewImportTx(
 		if !ok {
 			continue
 		}
-		importedAmount, err = math.Add64(importedAmount, input.Amount())
+		assetID := utxo.AssetID()
+		importedAmounts[assetID], err = math.Add64(importedAmounts[assetID], input.Amount())
 		if err != nil {
 			return nil, err
 		}
@@ -232,24 +240,34 @@ func (b *builder) NewImportTx(
 	}
 	avax.SortTransferableInputsWithSigners(importedInputs, signers)
 
-	if importedAmount == 0 {
+	if len(importedAmounts) == 0 {
 		return nil, errNoFunds // No imported UTXOs were spendable
 	}
 
+	importedAVAX := importedAmounts[b.ctx.AVAXAssetID]
+
 	ins := []*avax.TransferableInput{}
 	outs := []*avax.TransferableOutput{}
-	if importedAmount < b.cfg.TxFee { // imported amount goes toward paying tx fee
+	switch {
+	case importedAVAX < b.cfg.TxFee: // imported amount goes toward paying tx fee
 		var baseSigners [][]*crypto.PrivateKeySECP256K1R
-		ins, outs, _, baseSigners, err = b.Spend(keys, 0, b.cfg.TxFee-importedAmount, changeAddr)
+		ins, outs, _, baseSigners, err = b.Spend(keys, 0, b.cfg.TxFee-importedAVAX, changeAddr)
 		if err != nil {
 			return nil, fmt.Errorf("couldn't generate tx inputs/outputs: %w", err)
 		}
 		signers = append(baseSigners, signers...)
-	} else if importedAmount > b.cfg.TxFee {
+		delete(importedAmounts, b.ctx.AVAXAssetID)
+	case importedAVAX == b.cfg.TxFee:
+		delete(importedAmounts, b.ctx.AVAXAssetID)
+	default:
+		importedAmounts[b.ctx.AVAXAssetID] -= b.cfg.TxFee
+	}
+
+	for assetID, amount := range importedAmounts {
 		outs = append(outs, &avax.TransferableOutput{
-			Asset: avax.Asset{ID: b.ctx.AVAXAssetID},
+			Asset: avax.Asset{ID: assetID},
 			Out: &secp256k1fx.TransferOutput{
-				Amt: importedAmount - b.cfg.TxFee,
+				Amt: amount,
 				OutputOwners: secp256k1fx.OutputOwners{
 					Locktime:  0,
 					Threshold: 1,
@@ -258,6 +276,8 @@ func (b *builder) NewImportTx(
 			},
 		})
 	}
+
+	avax.SortTransferableOutputs(outs, txs.Codec) // sort imported outputs
 
 	// Create the transaction
 	utx := &txs.ImportTx{
@@ -277,6 +297,7 @@ func (b *builder) NewImportTx(
 	return tx, tx.SyntacticVerify(b.ctx)
 }
 
+// TODO: should support other assets than AVAX
 func (b *builder) NewExportTx(
 	amount uint64,
 	chainID ids.ID,
@@ -414,7 +435,7 @@ func (b *builder) NewAddValidatorTx(
 	keys []*crypto.PrivateKeySECP256K1R,
 	changeAddr ids.ShortID,
 ) (*txs.Tx, error) {
-	ins, unstakedOuts, stakedOuts, signers, err := b.Spend(keys, stakeAmount, b.cfg.AddStakerTxFee, changeAddr)
+	ins, unstakedOuts, stakedOuts, signers, err := b.Spend(keys, stakeAmount, b.cfg.AddPrimaryNetworkValidatorFee, changeAddr)
 	if err != nil {
 		return nil, fmt.Errorf("couldn't generate tx inputs/outputs: %w", err)
 	}
@@ -432,13 +453,13 @@ func (b *builder) NewAddValidatorTx(
 			End:    endTime,
 			Wght:   stakeAmount,
 		},
-		Stake: stakedOuts,
+		StakeOuts: stakedOuts,
 		RewardsOwner: &secp256k1fx.OutputOwners{
 			Locktime:  0,
 			Threshold: 1,
 			Addrs:     []ids.ShortID{rewardAddress},
 		},
-		Shares: shares,
+		DelegationShares: shares,
 	}
 	tx, err := txs.NewSigned(utx, txs.Codec, signers)
 	if err != nil {
@@ -456,7 +477,7 @@ func (b *builder) NewAddDelegatorTx(
 	keys []*crypto.PrivateKeySECP256K1R,
 	changeAddr ids.ShortID,
 ) (*txs.Tx, error) {
-	ins, unlockedOuts, lockedOuts, signers, err := b.Spend(keys, stakeAmount, b.cfg.AddStakerTxFee, changeAddr)
+	ins, unlockedOuts, lockedOuts, signers, err := b.Spend(keys, stakeAmount, b.cfg.AddPrimaryNetworkDelegatorFee, changeAddr)
 	if err != nil {
 		return nil, fmt.Errorf("couldn't generate tx inputs/outputs: %w", err)
 	}
@@ -474,8 +495,8 @@ func (b *builder) NewAddDelegatorTx(
 			End:    endTime,
 			Wght:   stakeAmount,
 		},
-		Stake: lockedOuts,
-		RewardsOwner: &secp256k1fx.OutputOwners{
+		StakeOuts: lockedOuts,
+		DelegationRewardsOwner: &secp256k1fx.OutputOwners{
 			Locktime:  0,
 			Threshold: 1,
 			Addrs:     []ids.ShortID{rewardAddress},
@@ -525,6 +546,42 @@ func (b *builder) NewAddSubnetValidatorTx(
 			},
 			Subnet: subnetID,
 		},
+		SubnetAuth: subnetAuth,
+	}
+	tx, err := txs.NewSigned(utx, txs.Codec, signers)
+	if err != nil {
+		return nil, err
+	}
+	return tx, tx.SyntacticVerify(b.ctx)
+}
+
+func (b *builder) NewRemoveSubnetValidatorTx(
+	nodeID ids.NodeID,
+	subnetID ids.ID,
+	keys []*crypto.PrivateKeySECP256K1R,
+	changeAddr ids.ShortID,
+) (*txs.Tx, error) {
+	ins, outs, _, signers, err := b.Spend(keys, 0, b.cfg.TxFee, changeAddr)
+	if err != nil {
+		return nil, fmt.Errorf("couldn't generate tx inputs/outputs: %w", err)
+	}
+
+	subnetAuth, subnetSigners, err := b.Authorize(b.state, subnetID, keys)
+	if err != nil {
+		return nil, fmt.Errorf("couldn't authorize tx's subnet restrictions: %w", err)
+	}
+	signers = append(signers, subnetSigners)
+
+	// Create the tx
+	utx := &txs.RemoveSubnetValidatorTx{
+		BaseTx: txs.BaseTx{BaseTx: avax.BaseTx{
+			NetworkID:    b.ctx.NetworkID,
+			BlockchainID: b.ctx.ChainID,
+			Ins:          ins,
+			Outs:         outs,
+		}},
+		Subnet:     subnetID,
+		NodeID:     nodeID,
 		SubnetAuth: subnetAuth,
 	}
 	tx, err := txs.NewSigned(utx, txs.Codec, signers)

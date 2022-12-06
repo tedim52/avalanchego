@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package crypto
@@ -18,9 +18,9 @@ var (
 )
 
 var (
-	_ Factory    = &FactoryED25519{}
-	_ PublicKey  = &PublicKeyED25519{}
-	_ PrivateKey = &PrivateKeyED25519{}
+	_ Factory    = (*FactoryED25519)(nil)
+	_ PublicKey  = (*PublicKeyED25519)(nil)
+	_ PrivateKey = (*PrivateKeyED25519)(nil)
 )
 
 type FactoryED25519 struct{}
@@ -68,7 +68,9 @@ func (k *PublicKeyED25519) Address() ids.ShortID {
 	return k.addr
 }
 
-func (k *PublicKeyED25519) Bytes() []byte { return k.pk }
+func (k *PublicKeyED25519) Bytes() []byte {
+	return k.pk
+}
 
 type PrivateKeyED25519 struct {
 	sk ed25519.PrivateKey
@@ -92,4 +94,6 @@ func (k PrivateKeyED25519) SignHash(hash []byte) ([]byte, error) {
 	return k.Sign(hash)
 }
 
-func (k PrivateKeyED25519) Bytes() []byte { return k.sk }
+func (k PrivateKeyED25519) Bytes() []byte {
+	return k.sk
+}

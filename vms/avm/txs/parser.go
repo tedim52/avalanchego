@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package txs
@@ -19,7 +19,7 @@ import (
 
 const CodecVersion = 0
 
-var _ Parser = &parser{}
+var _ Parser = (*parser)(nil)
 
 type Parser interface {
 	Codec() codec.Manager
@@ -99,12 +99,29 @@ func NewCustomParser(
 	}, nil
 }
 
-func (p *parser) Codec() codec.Manager                   { return p.cm }
-func (p *parser) GenesisCodec() codec.Manager            { return p.gcm }
-func (p *parser) Parse(bytes []byte) (*Tx, error)        { return parse(p.cm, bytes) }
-func (p *parser) ParseGenesis(bytes []byte) (*Tx, error) { return parse(p.gcm, bytes) }
-func (p *parser) InitializeTx(tx *Tx) error              { return initializeTx(p.cm, tx) }
-func (p *parser) InitializeGenesisTx(tx *Tx) error       { return initializeTx(p.gcm, tx) }
+func (p *parser) Codec() codec.Manager {
+	return p.cm
+}
+
+func (p *parser) GenesisCodec() codec.Manager {
+	return p.gcm
+}
+
+func (p *parser) Parse(bytes []byte) (*Tx, error) {
+	return parse(p.cm, bytes)
+}
+
+func (p *parser) ParseGenesis(bytes []byte) (*Tx, error) {
+	return parse(p.gcm, bytes)
+}
+
+func (p *parser) InitializeTx(tx *Tx) error {
+	return initializeTx(p.cm, tx)
+}
+
+func (p *parser) InitializeGenesisTx(tx *Tx) error {
+	return initializeTx(p.gcm, tx)
+}
 
 func parse(cm codec.Manager, bytes []byte) (*Tx, error) {
 	tx := &Tx{}

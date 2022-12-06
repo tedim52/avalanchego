@@ -1,9 +1,10 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package getter
 
 import (
+	"context"
 	"errors"
 	"testing"
 
@@ -31,9 +32,13 @@ func testSetup(t *testing.T) (*vertex.TestManager, *common.SenderTest, common.Co
 
 	isBootstrapped := false
 	subnet := &common.SubnetTest{
-		T:               t,
-		IsBootstrappedF: func() bool { return isBootstrapped },
-		BootstrappedF:   func(ids.ID) { isBootstrapped = true },
+		T: t,
+		IsBootstrappedF: func() bool {
+			return isBootstrapped
+		},
+		BootstrappedF: func(ids.ID) {
+			isBootstrapped = true
+		},
 	}
 
 	commonConfig := common.Config{
@@ -72,7 +77,7 @@ func TestAcceptedFrontier(t *testing.T) {
 		t.Fatal("Unexpected get handler")
 	}
 
-	manager.EdgeF = func() []ids.ID {
+	manager.EdgeF = func(context.Context) []ids.ID {
 		return []ids.ID{
 			vtxID0,
 			vtxID1,
@@ -80,11 +85,11 @@ func TestAcceptedFrontier(t *testing.T) {
 	}
 
 	var accepted []ids.ID
-	sender.SendAcceptedFrontierF = func(_ ids.NodeID, _ uint32, frontier []ids.ID) {
+	sender.SendAcceptedFrontierF = func(_ context.Context, _ ids.NodeID, _ uint32, frontier []ids.ID) {
 		accepted = frontier
 	}
 
-	if err := bs.GetAcceptedFrontier(ids.EmptyNodeID, 0); err != nil {
+	if err := bs.GetAcceptedFrontier(context.Background(), ids.EmptyNodeID, 0); err != nil {
 		t.Fatal(err)
 	}
 
@@ -131,7 +136,7 @@ func TestFilterAccepted(t *testing.T) {
 
 	vtxIDs := []ids.ID{vtxID0, vtxID1, vtxID2}
 
-	manager.GetVtxF = func(vtxID ids.ID) (avalanche.Vertex, error) {
+	manager.GetVtxF = func(_ context.Context, vtxID ids.ID) (avalanche.Vertex, error) {
 		switch vtxID {
 		case vtxID0:
 			return vtx0, nil
@@ -145,11 +150,11 @@ func TestFilterAccepted(t *testing.T) {
 	}
 
 	var accepted []ids.ID
-	sender.SendAcceptedF = func(_ ids.NodeID, _ uint32, frontier []ids.ID) {
+	sender.SendAcceptedF = func(_ context.Context, _ ids.NodeID, _ uint32, frontier []ids.ID) {
 		accepted = frontier
 	}
 
-	if err := bs.GetAccepted(ids.EmptyNodeID, 0, vtxIDs); err != nil {
+	if err := bs.GetAccepted(context.Background(), ids.EmptyNodeID, 0, vtxIDs); err != nil {
 		t.Fatal(err)
 	}
 

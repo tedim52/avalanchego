@@ -1,9 +1,10 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package avm
 
 import (
+	"context"
 	"math"
 	"testing"
 
@@ -33,7 +34,7 @@ func TestSetsAndGets(t *testing.T) {
 	)
 	ctx := vm.ctx
 	defer func() {
-		if err := vm.Shutdown(); err != nil {
+		if err := vm.Shutdown(context.Background()); err != nil {
 			t.Fatal(err)
 		}
 		ctx.Lock.Unlock()
@@ -124,7 +125,7 @@ func TestFundingNoAddresses(t *testing.T) {
 	)
 	ctx := vm.ctx
 	defer func() {
-		if err := vm.Shutdown(); err != nil {
+		if err := vm.Shutdown(context.Background()); err != nil {
 			t.Fatal(err)
 		}
 		ctx.Lock.Unlock()
@@ -165,7 +166,7 @@ func TestFundingAddresses(t *testing.T) {
 	)
 	ctx := vm.ctx
 	defer func() {
-		if err := vm.Shutdown(); err != nil {
+		if err := vm.Shutdown(context.Background()); err != nil {
 			t.Fatal(err)
 		}
 		ctx.Lock.Unlock()

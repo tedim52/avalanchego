@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package avax
@@ -12,7 +12,7 @@ import (
 	"github.com/ava-labs/avalanchego/utils/formatting/address"
 )
 
-var _ AddressManager = &addressManager{}
+var _ AddressManager = (*addressManager)(nil)
 
 type AddressManager interface {
 	// ParseLocalAddress takes in an address for this chain and produces the ID

@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package secp256k1fx
@@ -16,10 +16,12 @@ type TransferInput struct {
 	Input `serialize:"true"`
 }
 
-func (in *TransferInput) InitCtx(*snow.Context) {}
+func (*TransferInput) InitCtx(*snow.Context) {}
 
 // Amount returns the quantity of the asset this input produces
-func (in *TransferInput) Amount() uint64 { return in.Amt }
+func (in *TransferInput) Amount() uint64 {
+	return in.Amt
+}
 
 // Verify this input is syntactically valid
 func (in *TransferInput) Verify() error {

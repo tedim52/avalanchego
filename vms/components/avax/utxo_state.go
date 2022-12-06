@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package avax
@@ -15,14 +15,14 @@ import (
 	"github.com/ava-labs/avalanchego/ids"
 )
 
-var (
-	utxoPrefix  = []byte("utxo")
-	indexPrefix = []byte("index")
-)
-
 const (
 	utxoCacheSize  = 8192
 	indexCacheSize = 64
+)
+
+var (
+	utxoPrefix  = []byte("utxo")
+	indexPrefix = []byte("index")
 )
 
 // UTXOState is a thin wrapper around a database to provide, caching,

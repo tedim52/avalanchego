@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package throttling
@@ -7,14 +7,15 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/prometheus/client_golang/prometheus"
+
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/snow/networking/tracker"
 	"github.com/ava-labs/avalanchego/snow/validators"
 	"github.com/ava-labs/avalanchego/utils/logging"
-	"github.com/prometheus/client_golang/prometheus"
 )
 
-var _ InboundMsgThrottler = &inboundMsgThrottler{}
+var _ InboundMsgThrottler = (*inboundMsgThrottler)(nil)
 
 // InboundMsgThrottler rate-limits inbound messages from the network.
 type InboundMsgThrottler interface {
@@ -92,7 +93,6 @@ func NewInboundMsgThrottler(
 		fmt.Sprintf("%s_cpu", namespace),
 		registerer,
 		throttlerConfig.CPUThrottlerConfig,
-		vdrs,
 		resourceTracker.CPUTracker(),
 		cpuTargeter,
 	)
@@ -103,7 +103,6 @@ func NewInboundMsgThrottler(
 		fmt.Sprintf("%s_disk", namespace),
 		registerer,
 		throttlerConfig.DiskThrottlerConfig,
-		vdrs,
 		resourceTracker.DiskTracker(),
 		diskTargeter,
 	)

@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package avm
@@ -11,11 +11,11 @@ import (
 	"github.com/ava-labs/avalanchego/api"
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/utils/formatting"
+	"github.com/ava-labs/avalanchego/utils/logging"
+	"github.com/ava-labs/avalanchego/utils/math"
 	"github.com/ava-labs/avalanchego/vms/avm/txs"
 	"github.com/ava-labs/avalanchego/vms/components/avax"
 	"github.com/ava-labs/avalanchego/vms/secp256k1fx"
-
-	safemath "github.com/ava-labs/avalanchego/utils/math"
 )
 
 type WalletService struct {
@@ -87,8 +87,10 @@ func (w *WalletService) update(utxos []*avax.UTXO) ([]*avax.UTXO, error) {
 }
 
 // IssueTx attempts to issue a transaction into consensus
-func (w *WalletService) IssueTx(r *http.Request, args *api.FormattedTx, reply *api.JSONTxID) error {
-	w.vm.ctx.Log.Debug("AVM Wallet: IssueTx called with %s", args.Tx)
+func (w *WalletService) IssueTx(_ *http.Request, args *api.FormattedTx, reply *api.JSONTxID) error {
+	w.vm.ctx.Log.Debug("AVM Wallet: IssueTx called",
+		logging.UserString("tx", args.Tx),
+	)
 
 	txBytes, err := formatting.Decode(args.Encoding, args.Tx)
 	if err != nil {
@@ -109,8 +111,10 @@ func (w *WalletService) Send(r *http.Request, args *SendArgs, reply *api.JSONTxI
 }
 
 // SendMultiple sends a transaction with multiple outputs.
-func (w *WalletService) SendMultiple(r *http.Request, args *SendMultipleArgs, reply *api.JSONTxIDChangeAddr) error {
-	w.vm.ctx.Log.Debug("AVM Wallet: SendMultiple called with username: %s", args.Username)
+func (w *WalletService) SendMultiple(_ *http.Request, args *SendMultipleArgs, reply *api.JSONTxIDChangeAddr) error {
+	w.vm.ctx.Log.Debug("AVM Wallet: SendMultiple",
+		logging.UserString("username", args.Username),
+	)
 
 	// Validate the memo field
 	memoBytes := []byte(args.Memo)
@@ -168,7 +172,7 @@ func (w *WalletService) SendMultiple(r *http.Request, args *SendMultipleArgs, re
 			assetIDs[output.AssetID] = assetID
 		}
 		currentAmount := amounts[assetID]
-		newAmount, err := safemath.Add64(currentAmount, uint64(output.Amount))
+		newAmount, err := math.Add64(currentAmount, uint64(output.Amount))
 		if err != nil {
 			return fmt.Errorf("problem calculating required spend amount: %w", err)
 		}
@@ -199,7 +203,7 @@ func (w *WalletService) SendMultiple(r *http.Request, args *SendMultipleArgs, re
 		amountsWithFee[assetKey] = amount
 	}
 
-	amountWithFee, err := safemath.Add64(amounts[w.vm.feeAssetID], w.vm.TxFee)
+	amountWithFee, err := math.Add64(amounts[w.vm.feeAssetID], w.vm.TxFee)
 	if err != nil {
 		return fmt.Errorf("problem calculating required spend amount: %w", err)
 	}

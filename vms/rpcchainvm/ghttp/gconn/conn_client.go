@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package gconn
@@ -17,7 +17,7 @@ import (
 	connpb "github.com/ava-labs/avalanchego/proto/pb/net/conn"
 )
 
-var _ net.Conn = &Client{}
+var _ net.Conn = (*Client)(nil)
 
 // Client is an implementation of a connection that talks over RPC.
 type Client struct {
@@ -77,8 +77,13 @@ func (c *Client) Close() error {
 	return errs.Err
 }
 
-func (c *Client) LocalAddr() net.Addr  { return c.local }
-func (c *Client) RemoteAddr() net.Addr { return c.remote }
+func (c *Client) LocalAddr() net.Addr {
+	return c.local
+}
+
+func (c *Client) RemoteAddr() net.Addr {
+	return c.remote
+}
 
 func (c *Client) SetDeadline(t time.Time) error {
 	bytes, err := t.MarshalBinary()

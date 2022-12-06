@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package metrics
@@ -17,7 +17,7 @@ import (
 var (
 	errDuplicatedPrefix = errors.New("duplicated prefix")
 
-	_ MultiGatherer = &multiGatherer{}
+	_ MultiGatherer = (*multiGatherer)(nil)
 )
 
 // MultiGatherer extends the Gatherer interface by allowing additional gatherers
@@ -86,8 +86,18 @@ func (g *multiGatherer) Register(namespace string, gatherer prometheus.Gatherer)
 
 type sortMetricsData []*dto.MetricFamily
 
-func (m sortMetricsData) Less(i, j int) bool { return *m[i].Name < *m[j].Name }
-func (m sortMetricsData) Len() int           { return len(m) }
-func (m sortMetricsData) Swap(i, j int)      { m[j], m[i] = m[i], m[j] }
+func (m sortMetricsData) Less(i, j int) bool {
+	return *m[i].Name < *m[j].Name
+}
 
-func sortMetrics(m []*dto.MetricFamily) { sort.Sort(sortMetricsData(m)) }
+func (m sortMetricsData) Len() int {
+	return len(m)
+}
+
+func (m sortMetricsData) Swap(i, j int) {
+	m[j], m[i] = m[i], m[j]
+}
+
+func sortMetrics(m []*dto.MetricFamily) {
+	sort.Sort(sortMetricsData(m))
+}

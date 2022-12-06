@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package keystore
@@ -34,7 +34,7 @@ var (
 	usersPrefix = []byte("users")
 	bcsPrefix   = []byte("bcs")
 
-	_ Keystore = &keystore{}
+	_ Keystore = (*keystore)(nil)
 )
 
 type Keystore interface {

@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package primary
@@ -15,8 +15,8 @@ import (
 )
 
 var (
-	_ UTXOs      = &utxos{}
-	_ ChainUTXOs = &chainUTXOs{}
+	_ UTXOs      = (*utxos)(nil)
+	_ ChainUTXOs = (*chainUTXOs)(nil)
 
 	// TODO: refactor ChainUTXOs definition to allow the client implementations
 	//       to perform their own assertions.

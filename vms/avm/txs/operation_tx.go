@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package txs
@@ -18,8 +18,8 @@ var (
 	errNoOperations              = errors.New("an operationTx must have at least one operation")
 	errDoubleSpend               = errors.New("inputs attempt to double spend an input")
 
-	_ UnsignedTx             = &OperationTx{}
-	_ secp256k1fx.UnsignedTx = &OperationTx{}
+	_ UnsignedTx             = (*OperationTx)(nil)
+	_ secp256k1fx.UnsignedTx = (*OperationTx)(nil)
 )
 
 // OperationTx is a transaction with no credentials.
@@ -38,7 +38,9 @@ func (t *OperationTx) InitCtx(ctx *snow.Context) {
 
 // Operations track which ops this transaction is performing. The returned array
 // should not be modified.
-func (t *OperationTx) Operations() []*Operation { return t.Ops }
+func (t *OperationTx) Operations() []*Operation {
+	return t.Ops
+}
 
 func (t *OperationTx) InputUTXOs() []*avax.UTXOID {
 	utxos := t.BaseTx.InputUTXOs()
@@ -99,7 +101,7 @@ func (t *OperationTx) SyntacticVerify(
 	}
 
 	for _, op := range t.Ops {
-		if err := op.Verify(c); err != nil {
+		if err := op.Verify(); err != nil {
 			return err
 		}
 		for _, utxoID := range op.UTXOIDs {

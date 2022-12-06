@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package rpcdb
@@ -8,10 +8,10 @@ import (
 	"net"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/test/bufconn"
-
-	"github.com/stretchr/testify/assert"
 
 	"github.com/ava-labs/avalanchego/database"
 	"github.com/ava-labs/avalanchego/database/corruptabledb"
@@ -79,6 +79,15 @@ func TestInterface(t *testing.T) {
 	}
 }
 
+func FuzzInterface(f *testing.F) {
+	for _, test := range database.FuzzTests {
+		db := setupDB(f)
+		test(f, db.client)
+
+		db.closeFn()
+	}
+}
+
 func BenchmarkInterface(b *testing.B) {
 	for _, size := range database.BenchmarkSizes {
 		keys, values := database.SetupBenchmark(b, size[0], size[1], size[2])
@@ -91,7 +100,7 @@ func BenchmarkInterface(b *testing.B) {
 }
 
 func TestHealthCheck(t *testing.T) {
-	assert := assert.New(t)
+	require := require.New(t)
 
 	scenarios := []struct {
 		name         string
@@ -122,31 +131,31 @@ func TestHealthCheck(t *testing.T) {
 			baseDB := setupDB(t)
 			db := corruptabledb.New(baseDB.server)
 			defer db.Close()
-			assert.NoError(scenario.testFn(db))
+			require.NoError(scenario.testFn(db))
 
 			// check db HealthCheck
-			_, err := db.HealthCheck()
+			_, err := db.HealthCheck(context.Background())
 			if err == nil && scenario.wantErr {
 				t.Fatalf("wanted error got nil")
 				return
 			}
 			if scenario.wantErr {
-				assert.Containsf(err.Error(), scenario.wantErrMsg, "expected error containing %q, got %s", scenario.wantErrMsg, err)
+				require.Containsf(err.Error(), scenario.wantErrMsg, "expected error containing %q, got %s", scenario.wantErrMsg, err)
 				return
 			}
-			assert.Nil(err)
+			require.Nil(err)
 
 			// check rpc HealthCheck
-			_, err = baseDB.client.HealthCheck()
+			_, err = baseDB.client.HealthCheck(context.Background())
 			if err == nil && scenario.wantErr {
 				t.Fatalf("wanted error got nil")
 				return
 			}
 			if scenario.wantErr {
-				assert.Containsf(err.Error(), scenario.wantErrMsg, "expected error containing %q, got %s", scenario.wantErrMsg, err)
+				require.Containsf(err.Error(), scenario.wantErrMsg, "expected error containing %q, got %s", scenario.wantErrMsg, err)
 				return
 			}
-			assert.Nil(err)
+			require.Nil(err)
 		})
 	}
 }

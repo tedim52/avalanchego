@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package ids
@@ -75,8 +75,14 @@ func (ids sortNodeIDData) Less(i, j int) bool {
 		ids[i].Bytes(),
 		ids[j].Bytes()) == -1
 }
-func (ids sortNodeIDData) Len() int      { return len(ids) }
-func (ids sortNodeIDData) Swap(i, j int) { ids[j], ids[i] = ids[i], ids[j] }
+
+func (ids sortNodeIDData) Len() int {
+	return len(ids)
+}
+
+func (ids sortNodeIDData) Swap(i, j int) {
+	ids[j], ids[i] = ids[i], ids[j]
+}
 
 // SortNodeIDs sorts the node IDs lexicographically
 func SortNodeIDs(nodeIDs []NodeID) {

@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package platformvm
@@ -9,7 +9,7 @@ import (
 	"github.com/ava-labs/avalanchego/vms/platformvm/config"
 )
 
-var _ vms.Factory = &Factory{}
+var _ vms.Factory = (*Factory)(nil)
 
 // Factory can create new instances of the Platform Chain
 type Factory struct {

@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package plugin
@@ -29,8 +29,8 @@ var (
 		Name: &appPlugin{},
 	}
 
-	_ plugin.Plugin     = &appPlugin{}
-	_ plugin.GRPCPlugin = &appPlugin{}
+	_ plugin.Plugin     = (*appPlugin)(nil)
+	_ plugin.GRPCPlugin = (*appPlugin)(nil)
 )
 
 type appPlugin struct {
@@ -51,6 +51,6 @@ func (p *appPlugin) GRPCServer(_ *plugin.GRPCBroker, s *grpc.Server) error {
 }
 
 // GRPCClient returns a new GRPC client
-func (p *appPlugin) GRPCClient(_ context.Context, _ *plugin.GRPCBroker, c *grpc.ClientConn) (interface{}, error) {
+func (*appPlugin) GRPCClient(_ context.Context, _ *plugin.GRPCBroker, c *grpc.ClientConn) (interface{}, error) {
 	return NewClient(pluginpb.NewNodeClient(c)), nil
 }

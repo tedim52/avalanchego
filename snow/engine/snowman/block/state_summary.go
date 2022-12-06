@@ -1,9 +1,11 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package block
 
 import (
+	"context"
+
 	"github.com/ava-labs/avalanchego/ids"
 )
 
@@ -23,5 +25,5 @@ type StateSummary interface {
 	//
 	// The returned boolean will be [true] if the VM has started state sync or
 	// [false] if the VM has skipped state sync.
-	Accept() (bool, error)
+	Accept(context.Context) (bool, error)
 }

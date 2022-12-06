@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package snowball
@@ -11,16 +11,18 @@ import (
 )
 
 var (
-	_ Factory   = &TreeFactory{}
-	_ Consensus = &Tree{}
-	_ node      = &unaryNode{}
-	_ node      = &binaryNode{}
+	_ Factory   = (*TreeFactory)(nil)
+	_ Consensus = (*Tree)(nil)
+	_ node      = (*unaryNode)(nil)
+	_ node      = (*binaryNode)(nil)
 )
 
 // TreeFactory implements Factory by returning a tree struct
 type TreeFactory struct{}
 
-func (TreeFactory) New() Consensus { return &Tree{} }
+func (TreeFactory) New() Consensus {
+	return &Tree{}
+}
 
 // Tree implements the snowball interface by using a modified patricia tree.
 type Tree struct {
@@ -57,8 +59,6 @@ func (t *Tree) Initialize(params Parameters, choice ids.ID) {
 	}
 }
 
-func (t *Tree) Parameters() Parameters { return t.params }
-
 func (t *Tree) Add(choice ids.ID) {
 	prefix := t.node.DecidedPrefix()
 	// Make sure that we haven't already decided against this new id
@@ -67,7 +67,7 @@ func (t *Tree) Add(choice ids.ID) {
 	}
 }
 
-func (t *Tree) RecordPoll(votes ids.Bag) {
+func (t *Tree) RecordPoll(votes ids.Bag) bool {
 	// Get the assumed decided prefix of the root node.
 	decidedPrefix := t.node.DecidedPrefix()
 
@@ -77,17 +77,21 @@ func (t *Tree) RecordPoll(votes ids.Bag) {
 
 	// Now that the votes have been restricted to valid votes, pass them into
 	// the first snowball instance
-	t.node = t.node.RecordPoll(filteredVotes, t.shouldReset)
+	var successful bool
+	t.node, successful = t.node.RecordPoll(filteredVotes, t.shouldReset)
 
 	// Because we just passed the reset into the snowball instance, we should no
 	// longer reset.
 	t.shouldReset = false
+	return successful
 }
 
-func (t *Tree) RecordUnsuccessfulPoll() { t.shouldReset = true }
+func (t *Tree) RecordUnsuccessfulPoll() {
+	t.shouldReset = true
+}
 
 func (t *Tree) String() string {
-	builder := strings.Builder{}
+	sb := strings.Builder{}
 
 	prefixes := []string{""}
 	nodes := []node{t.node}
@@ -103,9 +107,9 @@ func (t *Tree) String() string {
 
 		s, newNodes := node.Printable()
 
-		builder.WriteString(prefix)
-		builder.WriteString(s)
-		builder.WriteString("\n")
+		sb.WriteString(prefix)
+		sb.WriteString(s)
+		sb.WriteString("\n")
 
 		newPrefix := prefix + "    "
 		for range newNodes {
@@ -114,7 +118,7 @@ func (t *Tree) String() string {
 		nodes = append(nodes, newNodes...)
 	}
 
-	return strings.TrimSuffix(builder.String(), "\n")
+	return strings.TrimSuffix(sb.String(), "\n")
 }
 
 type node interface {
@@ -123,9 +127,11 @@ type node interface {
 	// Return the number of assumed decided bits of this node
 	DecidedPrefix() int
 	// Adds a new choice to vote on
+	// Returns the new node
 	Add(newChoice ids.ID) node
 	// Apply the votes, reset the model if needed
-	RecordPoll(votes ids.Bag, shouldReset bool) (newChild node)
+	// Returns the new node and whether the vote was successful
+	RecordPoll(votes ids.Bag, shouldReset bool) (newChild node, successful bool)
 	// Returns true if consensus has been reached on this node
 	Finalized() bool
 
@@ -161,8 +167,13 @@ type unaryNode struct {
 	child node
 }
 
-func (u *unaryNode) Preference() ids.ID { return u.preference }
-func (u *unaryNode) DecidedPrefix() int { return u.decidedPrefix }
+func (u *unaryNode) Preference() ids.ID {
+	return u.preference
+}
+
+func (u *unaryNode) DecidedPrefix() int {
+	return u.decidedPrefix
+}
 
 // This is by far the most complicated function in this algorithm.
 // The intuition is that this instance represents a series of consecutive unary
@@ -389,7 +400,7 @@ func (u *unaryNode) Add(newChoice ids.ID) node {
 	return u // Do nothing, the choice was already rejected
 }
 
-func (u *unaryNode) RecordPoll(votes ids.Bag, reset bool) node {
+func (u *unaryNode) RecordPoll(votes ids.Bag, reset bool) (node, bool) {
 	// We are guaranteed that the votes are of IDs that have previously been
 	// added. This ensures that the provided votes all have the same bits in the
 	// range [u.decidedPrefix, u.commonPrefix) as in u.preference.
@@ -400,42 +411,44 @@ func (u *unaryNode) RecordPoll(votes ids.Bag, reset bool) node {
 		u.shouldReset = true // Make sure my child is also reset correctly
 	}
 
-	// If I got enough votes this time
-	if votes.Len() >= u.tree.params.Alpha {
-		u.snowball.RecordSuccessfulPoll()
-
-		if u.child != nil {
-			// We are guaranteed that u.commonPrefix will equal
-			// u.child.DecidedPrefix(). Otherwise, there must have been a
-			// decision under this node, which isn't possible because
-			// beta1 <= beta2. That means that filtering the votes between
-			// u.commonPrefix and u.child.DecidedPrefix() would always result in
-			// the same set being returned.
-
-			newChild := u.child.RecordPoll(votes, u.shouldReset)
-			if u.Finalized() {
-				// If I'm now decided, return my child
-				return newChild
-			}
-			u.child = newChild
-
-			// The child's preference may have changed
-			u.preference = u.child.Preference()
-		}
-		// Now that I have passed my votes to my child, I don't need to reset
-		// them
-		u.shouldReset = false
-	} else {
+	if votes.Len() < u.tree.params.Alpha {
 		// I didn't get enough votes, I must reset and my child must reset as
 		// well
 		u.snowball.RecordUnsuccessfulPoll()
 		u.shouldReset = true
+		return u, false
 	}
 
-	return u
+	// I got enough votes this time
+	u.snowball.RecordSuccessfulPoll()
+
+	if u.child != nil {
+		// We are guaranteed that u.commonPrefix will equal
+		// u.child.DecidedPrefix(). Otherwise, there must have been a
+		// decision under this node, which isn't possible because
+		// beta1 <= beta2. That means that filtering the votes between
+		// u.commonPrefix and u.child.DecidedPrefix() would always result in
+		// the same set being returned.
+
+		newChild, _ := u.child.RecordPoll(votes, u.shouldReset)
+		if u.Finalized() {
+			// If I'm now decided, return my child
+			return newChild, true
+		}
+		u.child = newChild
+
+		// The child's preference may have changed
+		u.preference = u.child.Preference()
+	}
+	// Now that I have passed my votes to my child, I don't need to reset
+	// them
+	u.shouldReset = false
+	return u, true
 }
 
-func (u *unaryNode) Finalized() bool { return u.snowball.Finalized() }
+func (u *unaryNode) Finalized() bool {
+	return u.snowball.Finalized()
+}
 
 func (u *unaryNode) Printable() (string, []node) {
 	s := fmt.Sprintf("%s Bits = [%d, %d)",
@@ -471,8 +484,13 @@ type binaryNode struct {
 	children [2]node
 }
 
-func (b *binaryNode) Preference() ids.ID { return b.preferences[b.snowball.Preference()] }
-func (b *binaryNode) DecidedPrefix() int { return b.bit }
+func (b *binaryNode) Preference() ids.ID {
+	return b.preferences[b.snowball.Preference()]
+}
+
+func (b *binaryNode) DecidedPrefix() int {
+	return b.bit
+}
 
 func (b *binaryNode) Add(id ids.ID) node {
 	bit := id.Bit(uint(b.bit))
@@ -492,7 +510,7 @@ func (b *binaryNode) Add(id ids.ID) node {
 	return b
 }
 
-func (b *binaryNode) RecordPoll(votes ids.Bag, reset bool) node {
+func (b *binaryNode) RecordPoll(votes ids.Bag, reset bool) (node, bool) {
 	// The list of votes we are passed is split into votes for bit 0 and votes
 	// for bit 1
 	splitVotes := votes.Split(uint(b.bit))
@@ -511,35 +529,38 @@ func (b *binaryNode) RecordPoll(votes ids.Bag, reset bool) node {
 	b.shouldReset[1-bit] = true // They didn't get the threshold of votes
 
 	prunedVotes := splitVotes[bit]
-	// If this bit got alpha votes, it was a successful poll
-	if prunedVotes.Len() >= b.tree.params.Alpha {
-		b.snowball.RecordSuccessfulPoll(bit)
-
-		if child := b.children[bit]; child != nil {
-			// The votes are filtered to ensure that they are votes that should
-			// count for the child
-			filteredVotes := prunedVotes.Filter(
-				b.bit+1, child.DecidedPrefix(), b.preferences[bit])
-
-			newChild := child.RecordPoll(filteredVotes, b.shouldReset[bit])
-			if b.snowball.Finalized() {
-				// If we are decided here, that means we must have decided due
-				// to this poll. Therefore, we must have decided on bit.
-				return newChild
-			}
-			b.children[bit] = newChild
-			b.preferences[bit] = newChild.Preference()
-		}
-		b.shouldReset[bit] = false // We passed the reset down
-	} else {
+	if prunedVotes.Len() < b.tree.params.Alpha {
 		b.snowball.RecordUnsuccessfulPoll()
 		// The winning child didn't get enough votes either
 		b.shouldReset[bit] = true
+		return b, false
 	}
-	return b
+
+	// This bit got alpha votes, it was a successful poll
+	b.snowball.RecordSuccessfulPoll(bit)
+
+	if child := b.children[bit]; child != nil {
+		// The votes are filtered to ensure that they are votes that should
+		// count for the child
+		filteredVotes := prunedVotes.Filter(
+			b.bit+1, child.DecidedPrefix(), b.preferences[bit])
+
+		newChild, _ := child.RecordPoll(filteredVotes, b.shouldReset[bit])
+		if b.snowball.Finalized() {
+			// If we are decided here, that means we must have decided due
+			// to this poll. Therefore, we must have decided on bit.
+			return newChild, true
+		}
+		b.children[bit] = newChild
+		b.preferences[bit] = newChild.Preference()
+	}
+	b.shouldReset[bit] = false // We passed the reset down
+	return b, true
 }
 
-func (b *binaryNode) Finalized() bool { return b.snowball.Finalized() }
+func (b *binaryNode) Finalized() bool {
+	return b.snowball.Finalized()
+}
 
 func (b *binaryNode) Printable() (string, []node) {
 	s := fmt.Sprintf("%s Bit = %d", b.snowball, b.bit)

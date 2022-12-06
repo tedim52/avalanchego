@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package rpcchainvm
@@ -23,7 +23,7 @@ import (
 var (
 	errWrongVM = errors.New("wrong vm type")
 
-	_ vms.Factory = &factory{}
+	_ vms.Factory = (*factory)(nil)
 )
 
 type factory struct {
@@ -59,6 +59,8 @@ func (f *factory) New(ctx *snow.Context) (interface{}, error) {
 		Managed:         true,
 		GRPCDialOptions: grpcutils.DefaultDialOptions,
 	}
+	// createStaticHandlers will send a nil ctx to disable logs
+	// TODO: create a separate log file and no-op ctx
 	if ctx != nil {
 		log.SetOutput(ctx.Log)
 		config.Stderr = ctx.Log

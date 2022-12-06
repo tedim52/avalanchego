@@ -1,13 +1,17 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package metervm
 
-import "github.com/ava-labs/avalanchego/snow/consensus/snowman"
+import (
+	"context"
+
+	"github.com/ava-labs/avalanchego/snow/consensus/snowman"
+)
 
 var (
-	_ snowman.Block       = &meterBlock{}
-	_ snowman.OracleBlock = &meterBlock{}
+	_ snowman.Block       = (*meterBlock)(nil)
+	_ snowman.OracleBlock = (*meterBlock)(nil)
 )
 
 type meterBlock struct {
@@ -16,9 +20,9 @@ type meterBlock struct {
 	vm *blockVM
 }
 
-func (mb *meterBlock) Verify() error {
+func (mb *meterBlock) Verify(ctx context.Context) error {
 	start := mb.vm.clock.Time()
-	err := mb.Block.Verify()
+	err := mb.Block.Verify(ctx)
 	end := mb.vm.clock.Time()
 	duration := float64(end.Sub(start))
 	if err != nil {
@@ -29,31 +33,31 @@ func (mb *meterBlock) Verify() error {
 	return err
 }
 
-func (mb *meterBlock) Accept() error {
+func (mb *meterBlock) Accept(ctx context.Context) error {
 	start := mb.vm.clock.Time()
-	err := mb.Block.Accept()
+	err := mb.Block.Accept(ctx)
 	end := mb.vm.clock.Time()
 	duration := float64(end.Sub(start))
 	mb.vm.blockMetrics.accept.Observe(duration)
 	return err
 }
 
-func (mb *meterBlock) Reject() error {
+func (mb *meterBlock) Reject(ctx context.Context) error {
 	start := mb.vm.clock.Time()
-	err := mb.Block.Reject()
+	err := mb.Block.Reject(ctx)
 	end := mb.vm.clock.Time()
 	duration := float64(end.Sub(start))
 	mb.vm.blockMetrics.reject.Observe(duration)
 	return err
 }
 
-func (mb *meterBlock) Options() ([2]snowman.Block, error) {
+func (mb *meterBlock) Options(ctx context.Context) ([2]snowman.Block, error) {
 	oracleBlock, ok := mb.Block.(snowman.OracleBlock)
 	if !ok {
 		return [2]snowman.Block{}, snowman.ErrNotOracle
 	}
 
-	blks, err := oracleBlock.Options()
+	blks, err := oracleBlock.Options(ctx)
 	if err != nil {
 		return [2]snowman.Block{}, err
 	}

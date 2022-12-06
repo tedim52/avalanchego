@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package txs
@@ -450,7 +450,7 @@ func TestCreateAssetTxSerializationAgain(t *testing.T) {
 	}
 }
 
-func TestCreateAssetTxGetters(t *testing.T) {
+func TestCreateAssetTxGetters(*testing.T) {
 	tx := &CreateAssetTx{
 		BaseTx: BaseTx{BaseTx: avax.BaseTx{
 			NetworkID:    networkID,

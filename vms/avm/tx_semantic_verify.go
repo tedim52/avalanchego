@@ -1,16 +1,15 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package avm
 
 import (
-	"github.com/ava-labs/avalanchego/utils/constants"
 	"github.com/ava-labs/avalanchego/vms/avm/txs"
 	"github.com/ava-labs/avalanchego/vms/components/avax"
 	"github.com/ava-labs/avalanchego/vms/components/verify"
 )
 
-var _ txs.Visitor = &txSemanticVerify{}
+var _ txs.Visitor = (*txSemanticVerify)(nil)
 
 // SemanticVerify that this transaction is well-formed.
 type txSemanticVerify struct {
@@ -97,10 +96,6 @@ func (t *txSemanticVerify) ExportTx(tx *txs.ExportTx) error {
 		}
 
 		assetID := out.AssetID()
-		if assetID != t.vm.ctx.AVAXAssetID && tx.DestinationChain == constants.PlatformChainID {
-			return errWrongAssetID
-		}
-
 		if !t.vm.verifyFxUsage(fxIndex, assetID) {
 			return errIncompatibleFx
 		}

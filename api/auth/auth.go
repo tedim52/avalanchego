@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package auth
@@ -53,7 +53,7 @@ var (
 	errNoEndpoints                 = errors.New("must name at least one endpoint")
 	errTooManyEndpoints            = fmt.Errorf("can only name at most %d endpoints", maxEndpoints)
 
-	_ Auth = &auth{}
+	_ Auth = (*auth)(nil)
 )
 
 type Auth interface {

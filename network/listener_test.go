@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package network
@@ -13,7 +13,7 @@ import (
 var (
 	errClosed = errors.New("closed")
 
-	_ net.Listener = &testListener{}
+	_ net.Listener = (*testListener)(nil)
 )
 
 type testListener struct {

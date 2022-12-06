@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package validators
@@ -11,7 +11,7 @@ import (
 	safemath "github.com/ava-labs/avalanchego/utils/math"
 )
 
-var _ Validator = &validator{}
+var _ Validator = (*validator)(nil)
 
 // Validator is the minimal description of someone that can be sampled.
 type Validator interface {
@@ -28,10 +28,20 @@ type Validator interface {
 type validator struct {
 	nodeID ids.NodeID
 	weight uint64
+
+	// index is used to efficiently remove validators from the validator set. It
+	// represents the index of this validator in the vdrSlice and weights
+	// arrays.
+	index int
 }
 
-func (v *validator) ID() ids.NodeID { return v.nodeID }
-func (v *validator) Weight() uint64 { return v.weight }
+func (v *validator) ID() ids.NodeID {
+	return v.nodeID
+}
+
+func (v *validator) Weight() uint64 {
+	return v.weight
+}
 
 func (v *validator) addWeight(weight uint64) {
 	newTotalWeight, err := safemath.Add64(weight, v.weight)
@@ -42,7 +52,7 @@ func (v *validator) addWeight(weight uint64) {
 }
 
 func (v *validator) removeWeight(weight uint64) {
-	newTotalWeight, err := safemath.Sub64(v.weight, weight)
+	newTotalWeight, err := safemath.Sub(v.weight, weight)
 	if err != nil {
 		newTotalWeight = 0
 	}
@@ -59,12 +69,4 @@ func NewValidator(
 		nodeID: nodeID,
 		weight: weight,
 	}
-}
-
-// GenerateRandomValidator creates a random validator with the provided weight
-func GenerateRandomValidator(weight uint64) Validator {
-	return NewValidator(
-		ids.GenerateTestNodeID(),
-		weight,
-	)
 }

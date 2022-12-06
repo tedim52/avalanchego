@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package avm
@@ -10,7 +10,7 @@ import (
 	"github.com/ava-labs/avalanchego/vms/components/avax"
 )
 
-var _ pubsub.Filterer = &filterer{}
+var _ pubsub.Filterer = (*filterer)(nil)
 
 type filterer struct {
 	tx *txs.Tx

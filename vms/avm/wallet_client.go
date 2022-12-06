@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package avm
@@ -15,7 +15,7 @@ import (
 	"github.com/ava-labs/avalanchego/utils/rpc"
 )
 
-var _ WalletClient = &client{}
+var _ WalletClient = (*client)(nil)
 
 // interface of an AVM wallet client for interacting with avm managed wallet on [chain]
 type WalletClient interface {
@@ -59,7 +59,7 @@ func NewWalletClient(uri, chain string) WalletClient {
 		chain,
 	)
 	return &walletClient{
-		requester: rpc.NewEndpointRequester(path, "wallet"),
+		requester: rpc.NewEndpointRequester(path),
 	}
 }
 
@@ -69,7 +69,7 @@ func (c *walletClient) IssueTx(ctx context.Context, txBytes []byte, options ...r
 		return ids.ID{}, err
 	}
 	res := &api.JSONTxID{}
-	err = c.requester.SendRequest(ctx, "issueTx", &api.FormattedTx{
+	err = c.requester.SendRequest(ctx, "wallet.issueTx", &api.FormattedTx{
 		Tx:       txStr,
 		Encoding: formatting.Hex,
 	}, res, options...)
@@ -100,7 +100,7 @@ func (c *walletClient) Send(
 	options ...rpc.Option,
 ) (ids.ID, error) {
 	res := &api.JSONTxID{}
-	err := c.requester.SendRequest(ctx, "send", &SendArgs{
+	err := c.requester.SendRequest(ctx, "wallet.send", &SendArgs{
 		JSONSpendHeader: api.JSONSpendHeader{
 			UserPass:       user,
 			JSONFromAddrs:  api.JSONFromAddrs{From: ids.ShortIDsToStrings(from)},
@@ -132,7 +132,7 @@ func (c *walletClient) SendMultiple(
 		serviceOutputs[i].AssetID = output.AssetID
 		serviceOutputs[i].To = output.To.String()
 	}
-	err := c.requester.SendRequest(ctx, "sendMultiple", &SendMultipleArgs{
+	err := c.requester.SendRequest(ctx, "wallet.sendMultiple", &SendMultipleArgs{
 		JSONSpendHeader: api.JSONSpendHeader{
 			UserPass:       user,
 			JSONFromAddrs:  api.JSONFromAddrs{From: ids.ShortIDsToStrings(from)},

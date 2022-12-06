@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package health
@@ -10,7 +10,7 @@ import (
 	"github.com/ava-labs/avalanchego/utils/rpc"
 )
 
-var _ Client = &client{}
+var _ Client = (*client)(nil)
 
 // Client interface for Avalanche Health API Endpoint
 type Client interface {
@@ -33,26 +33,25 @@ type client struct {
 // NewClient returns a client to interact with Health API endpoint
 func NewClient(uri string) Client {
 	return &client{requester: rpc.NewEndpointRequester(
-		uri+"/ext/health",
-		"health",
+		uri + "/ext/health",
 	)}
 }
 
 func (c *client) Readiness(ctx context.Context, options ...rpc.Option) (*APIHealthReply, error) {
 	res := &APIHealthReply{}
-	err := c.requester.SendRequest(ctx, "readiness", struct{}{}, res, options...)
+	err := c.requester.SendRequest(ctx, "health.readiness", struct{}{}, res, options...)
 	return res, err
 }
 
 func (c *client) Health(ctx context.Context, options ...rpc.Option) (*APIHealthReply, error) {
 	res := &APIHealthReply{}
-	err := c.requester.SendRequest(ctx, "health", struct{}{}, res, options...)
+	err := c.requester.SendRequest(ctx, "health.health", struct{}{}, res, options...)
 	return res, err
 }
 
 func (c *client) Liveness(ctx context.Context, options ...rpc.Option) (*APIHealthReply, error) {
 	res := &APIHealthReply{}
-	err := c.requester.SendRequest(ctx, "liveness", struct{}{}, res, options...)
+	err := c.requester.SendRequest(ctx, "health.liveness", struct{}{}, res, options...)
 	return res, err
 }
 

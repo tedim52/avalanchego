@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package node
@@ -17,6 +17,8 @@ import (
 	"github.com/ava-labs/avalanchego/snow/networking/router"
 	"github.com/ava-labs/avalanchego/snow/networking/sender"
 	"github.com/ava-labs/avalanchego/snow/networking/tracker"
+	"github.com/ava-labs/avalanchego/trace"
+	"github.com/ava-labs/avalanchego/utils/crypto/bls"
 	"github.com/ava-labs/avalanchego/utils/dynamicip"
 	"github.com/ava-labs/avalanchego/utils/ips"
 	"github.com/ava-labs/avalanchego/utils/logging"
@@ -73,7 +75,7 @@ type IPConfig struct {
 	IPPort           ips.DynamicIPPort `json:"ip"`
 	IPUpdater        dynamicip.Updater `json:"-"`
 	IPResolutionFreq time.Duration     `json:"ipResolutionFrequency"`
-	// True if we attempted NAT Traversal
+	// True if we attempted NAT traversal
 	AttemptedNATTraversal bool `json:"attemptedNATTraversal"`
 	// Tries to perform network address translation
 	Nat nat.Router `json:"-"`
@@ -83,9 +85,11 @@ type StakingConfig struct {
 	genesis.StakingConfig
 	EnableStaking         bool            `json:"enableStaking"`
 	StakingTLSCert        tls.Certificate `json:"-"`
+	StakingSigningKey     *bls.SecretKey  `json:"-"`
 	DisabledStakingWeight uint64          `json:"disabledStakingWeight"`
 	StakingKeyPath        string          `json:"stakingKeyPath"`
 	StakingCertPath       string          `json:"stakingCertPath"`
+	StakingSignerPath     string          `json:"stakingSignerPath"`
 }
 
 type StateSyncConfig struct {
@@ -100,7 +104,7 @@ type BootstrapConfig struct {
 	// Max number of times to retry bootstrap before warning the node operator
 	RetryBootstrapWarnFrequency int `json:"retryBootstrapWarnFrequency"`
 
-	// Timeout when connecting to bootstrapping beacons
+	// Timeout before emitting a warn log when connecting to bootstrapping beacons
 	BootstrapBeaconConnectionTimeout time.Duration `json:"bootstrapBeaconConnectionTimeout"`
 
 	// Max number of containers in an ancestors message sent by this node.
@@ -145,12 +149,6 @@ type Config struct {
 
 	// ID of the network this node should connect to
 	NetworkID uint32 `json:"networkID"`
-
-	// Assertions configuration
-	EnableAssertions bool `json:"enableAssertions"`
-
-	// Crypto configuration
-	EnableCrypto bool `json:"enableCrypto"`
 
 	// Health
 	HealthCheckFreq time.Duration `json:"healthCheckFreq"`
@@ -198,6 +196,7 @@ type Config struct {
 
 	// ChainConfigs
 	ChainConfigs map[string]chains.ChainConfig `json:"-"`
+	ChainAliases map[ids.ID][]string           `json:"chainAliases"`
 
 	// VM management
 	VMManager vms.Manager `json:"-"`
@@ -225,4 +224,15 @@ type Config struct {
 
 	RequiredAvailableDiskSpace         uint64 `json:"requiredAvailableDiskSpace"`
 	WarningThresholdAvailableDiskSpace uint64 `json:"warningThresholdAvailableDiskSpace"`
+
+	TraceConfig trace.Config `json:"traceConfig"`
+
+	// See comment on [MinPercentConnectedStakeHealthy] in platformvm.Config
+	MinPercentConnectedStakeHealthy map[ids.ID]float64 `json:"minPercentConnectedStakeHealthy"`
+
+	// See comment on [UseCurrentHeight] in platformvm.Config
+	UseCurrentHeight bool `json:"useCurrentHeight"`
+
+	// ProvidedFlags contains all the flags set by the user
+	ProvidedFlags map[string]interface{} `json:"-"`
 }

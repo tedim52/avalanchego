@@ -1,15 +1,16 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package getter
 
 import (
+	"context"
 	"errors"
 	"testing"
 
 	"github.com/golang/mock/gomock"
 
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/snow"
@@ -47,9 +48,13 @@ func testSetup(
 
 	isBootstrapped := false
 	subnet := &common.SubnetTest{
-		T:               t,
-		IsBootstrappedF: func() bool { return isBootstrapped },
-		BootstrappedF:   func(ids.ID) { isBootstrapped = true },
+		T: t,
+		IsBootstrappedF: func() bool {
+			return isBootstrapped
+		},
+		BootstrappedF: func(ids.ID) {
+			isBootstrapped = true
+		},
 	}
 
 	sender.CantSendGetAcceptedFrontier = false
@@ -93,9 +98,11 @@ func TestAcceptedFrontier(t *testing.T) {
 		BytesV:  []byte{1, 2, 3},
 	}
 	vm.CantLastAccepted = false
-	vm.LastAcceptedF = func() (ids.ID, error) { return blkID, nil }
-	vm.GetBlockF = func(bID ids.ID) (snowman.Block, error) {
-		assert.Equal(t, blkID, bID)
+	vm.LastAcceptedF = func(context.Context) (ids.ID, error) {
+		return blkID, nil
+	}
+	vm.GetBlockF = func(_ context.Context, bID ids.ID) (snowman.Block, error) {
+		require.Equal(t, blkID, bID)
 		return dummyBlk, nil
 	}
 
@@ -109,11 +116,11 @@ func TestAcceptedFrontier(t *testing.T) {
 	}
 
 	var accepted []ids.ID
-	sender.SendAcceptedFrontierF = func(_ ids.NodeID, _ uint32, frontier []ids.ID) {
+	sender.SendAcceptedFrontierF = func(_ context.Context, _ ids.NodeID, _ uint32, frontier []ids.ID) {
 		accepted = frontier
 	}
 
-	if err := bs.GetAcceptedFrontier(ids.EmptyNodeID, 0); err != nil {
+	if err := bs.GetAcceptedFrontier(context.Background(), ids.EmptyNodeID, 0); err != nil {
 		t.Fatal(err)
 	}
 
@@ -145,9 +152,11 @@ func TestFilterAccepted(t *testing.T) {
 	}}
 
 	vm.CantLastAccepted = false
-	vm.LastAcceptedF = func() (ids.ID, error) { return blk1.ID(), nil }
-	vm.GetBlockF = func(blkID ids.ID) (snowman.Block, error) {
-		assert.Equal(t, blk1.ID(), blkID)
+	vm.LastAcceptedF = func(context.Context) (ids.ID, error) {
+		return blk1.ID(), nil
+	}
+	vm.GetBlockF = func(_ context.Context, blkID ids.ID) (snowman.Block, error) {
+		require.Equal(t, blk1.ID(), blkID)
 		return blk1, nil
 	}
 
@@ -161,7 +170,7 @@ func TestFilterAccepted(t *testing.T) {
 	}
 
 	blkIDs := []ids.ID{blkID0, blkID1, blkID2}
-	vm.GetBlockF = func(blkID ids.ID) (snowman.Block, error) {
+	vm.GetBlockF = func(_ context.Context, blkID ids.ID) (snowman.Block, error) {
 		switch blkID {
 		case blkID0:
 			return blk0, nil
@@ -175,11 +184,11 @@ func TestFilterAccepted(t *testing.T) {
 	}
 
 	var accepted []ids.ID
-	sender.SendAcceptedF = func(_ ids.NodeID, _ uint32, frontier []ids.ID) {
+	sender.SendAcceptedF = func(_ context.Context, _ ids.NodeID, _ uint32, frontier []ids.ID) {
 		accepted = frontier
 	}
 
-	if err := bs.GetAccepted(ids.EmptyNodeID, 0, blkIDs); err != nil {
+	if err := bs.GetAccepted(context.Background(), ids.EmptyNodeID, 0, blkIDs); err != nil {
 		t.Fatal(err)
 	}
 

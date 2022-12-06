@@ -1,21 +1,24 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package txs
 
 import (
+	"errors"
 	"time"
 
+	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/snow"
+	"github.com/ava-labs/avalanchego/utils/constants"
+	"github.com/ava-labs/avalanchego/utils/crypto/bls"
 	"github.com/ava-labs/avalanchego/vms/components/verify"
 	"github.com/ava-labs/avalanchego/vms/platformvm/validator"
-	"github.com/ava-labs/avalanchego/vms/secp256k1fx"
 )
 
 var (
-	_ UnsignedTx             = &AddSubnetValidatorTx{}
-	_ StakerTx               = &AddSubnetValidatorTx{}
-	_ secp256k1fx.UnsignedTx = &AddSubnetValidatorTx{}
+	_ StakerTx = (*AddSubnetValidatorTx)(nil)
+
+	errAddPrimaryNetworkValidator = errors.New("can't add primary network validator with AddSubnetValidatorTx")
 )
 
 // AddSubnetValidatorTx is an unsigned addSubnetValidatorTx
@@ -28,19 +31,36 @@ type AddSubnetValidatorTx struct {
 	SubnetAuth verify.Verifiable `serialize:"true" json:"subnetAuthorization"`
 }
 
-// StartTime of this validator
+func (tx *AddSubnetValidatorTx) SubnetID() ids.ID {
+	return tx.Validator.Subnet
+}
+
+func (tx *AddSubnetValidatorTx) NodeID() ids.NodeID {
+	return tx.Validator.NodeID
+}
+
+func (*AddSubnetValidatorTx) PublicKey() (*bls.PublicKey, bool, error) {
+	return nil, false, nil
+}
+
 func (tx *AddSubnetValidatorTx) StartTime() time.Time {
 	return tx.Validator.StartTime()
 }
 
-// EndTime of this validator
 func (tx *AddSubnetValidatorTx) EndTime() time.Time {
 	return tx.Validator.EndTime()
 }
 
-// Weight of this validator
 func (tx *AddSubnetValidatorTx) Weight() uint64 {
-	return tx.Validator.Weight()
+	return tx.Validator.Wght
+}
+
+func (*AddSubnetValidatorTx) PendingPriority() Priority {
+	return SubnetPermissionedValidatorPendingPriority
+}
+
+func (*AddSubnetValidatorTx) CurrentPriority() Priority {
+	return SubnetPermissionedValidatorCurrentPriority
 }
 
 // SyntacticVerify returns nil iff [tx] is valid
@@ -50,6 +70,8 @@ func (tx *AddSubnetValidatorTx) SyntacticVerify(ctx *snow.Context) error {
 		return ErrNilTx
 	case tx.SyntacticallyVerified: // already passed syntactic verification
 		return nil
+	case tx.Validator.Subnet == constants.PrimaryNetworkID:
+		return errAddPrimaryNetworkValidator
 	}
 
 	if err := tx.BaseTx.SyntacticVerify(ctx); err != nil {

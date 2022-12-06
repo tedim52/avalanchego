@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package validators
@@ -11,7 +11,7 @@ import (
 	"github.com/ava-labs/avalanchego/ids"
 )
 
-var _ Manager = &manager{}
+var _ Manager = (*manager)(nil)
 
 // Manager holds the validator set of each subnet
 type Manager interface {
@@ -29,13 +29,6 @@ type Manager interface {
 	// GetValidators returns the validator set for the given subnet
 	// Returns false if the subnet doesn't exist
 	GetValidators(ids.ID) (Set, bool)
-
-	// MaskValidator hides the named validator from future samplings
-	MaskValidator(ids.NodeID) error
-
-	// RevealValidator ensures the named validator is not hidden from future
-	// samplings
-	RevealValidator(ids.NodeID) error
 
 	// Contains returns true if there is a validator with the specified ID
 	// currently in the set.
@@ -55,8 +48,6 @@ type manager struct {
 	// Key: Subnet ID
 	// Value: The validators that validate the subnet
 	subnetToVdrs map[ids.ID]Set
-
-	maskedVdrs ids.NodeIDSet
 }
 
 func (m *manager) Set(subnetID ids.ID, newSet Set) error {
@@ -78,11 +69,6 @@ func (m *manager) AddWeight(subnetID ids.ID, vdrID ids.NodeID, weight uint64) er
 	vdrs, ok := m.subnetToVdrs[subnetID]
 	if !ok {
 		vdrs = NewSet()
-		for _, maskedVdrID := range m.maskedVdrs.List() {
-			if err := vdrs.MaskValidator(maskedVdrID); err != nil {
-				return err
-			}
-		}
 		m.subnetToVdrs[subnetID] = vdrs
 	}
 	return vdrs.AddWeight(vdrID, weight)
@@ -104,40 +90,6 @@ func (m *manager) GetValidators(subnetID ids.ID) (Set, bool) {
 
 	vdrs, ok := m.subnetToVdrs[subnetID]
 	return vdrs, ok
-}
-
-func (m *manager) MaskValidator(vdrID ids.NodeID) error {
-	m.lock.Lock()
-	defer m.lock.Unlock()
-
-	if m.maskedVdrs.Contains(vdrID) {
-		return nil
-	}
-	m.maskedVdrs.Add(vdrID)
-
-	for _, vdrs := range m.subnetToVdrs {
-		if err := vdrs.MaskValidator(vdrID); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (m *manager) RevealValidator(vdrID ids.NodeID) error {
-	m.lock.Lock()
-	defer m.lock.Unlock()
-
-	if !m.maskedVdrs.Contains(vdrID) {
-		return nil
-	}
-	m.maskedVdrs.Remove(vdrID)
-
-	for _, vdrs := range m.subnetToVdrs {
-		if err := vdrs.RevealValidator(vdrID); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func (m *manager) Contains(subnetID ids.ID, vdrID ids.NodeID) bool {

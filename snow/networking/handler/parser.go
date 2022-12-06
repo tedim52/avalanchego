@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package handler
@@ -7,19 +7,13 @@ import (
 	"errors"
 
 	"github.com/ava-labs/avalanchego/ids"
-	"github.com/ava-labs/avalanchego/message"
 )
 
-var (
-	errDuplicatedID     = errors.New("inbound message contains duplicated ID")
-	errDuplicatedHeight = errors.New("inbound message contains duplicated height")
-)
+var errDuplicatedID = errors.New("inbound message contains duplicated ID")
 
-func getIDs(field message.Field, msg message.InboundMessage) ([]ids.ID, error) {
-	idsBytes := msg.Get(field).([][]byte)
+func getIDs(idsBytes [][]byte) ([]ids.ID, error) {
 	res := make([]ids.ID, len(idsBytes))
 	idSet := ids.NewSet(len(idsBytes))
-
 	for i, bytes := range idsBytes {
 		id, err := ids.ToID(bytes)
 		if err != nil {
@@ -34,15 +28,15 @@ func getIDs(field message.Field, msg message.InboundMessage) ([]ids.ID, error) {
 	return res, nil
 }
 
-func getSummaryHeights(msg message.InboundMessage) ([]uint64, error) {
-	heights := msg.Get(message.SummaryHeights).([]uint64)
-	heightsSet := make(map[uint64]struct{}, len(heights))
-
-	for _, height := range heights {
-		if _, found := heightsSet[height]; found {
-			return nil, errDuplicatedHeight
+// TODO: Enforce that the numbers are sorted to make this verification more
+//       efficient.
+func isUnique(nums []uint64) bool {
+	numsSet := make(map[uint64]struct{}, len(nums))
+	for _, num := range nums {
+		if _, found := numsSet[num]; found {
+			return false
 		}
-		heightsSet[height] = struct{}{}
+		numsSet[num] = struct{}{}
 	}
-	return heights, nil
+	return true
 }

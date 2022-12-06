@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package crypto
@@ -54,9 +54,9 @@ var (
 	errMissingKeyPrefix        = fmt.Errorf("private key missing %s prefix", PrivateKeyPrefix)
 	errInvalidPrivateKeyLength = fmt.Errorf("private key has unexpected length, expected %d", SECP256K1RSKLen)
 
-	_ RecoverableFactory = &FactorySECP256K1R{}
-	_ PublicKey          = &PublicKeySECP256K1R{}
-	_ PrivateKey         = &PrivateKeySECP256K1R{}
+	_ RecoverableFactory = (*FactorySECP256K1R)(nil)
+	_ PublicKey          = (*PublicKeySECP256K1R)(nil)
+	_ PrivateKey         = (*PrivateKeySECP256K1R)(nil)
 )
 
 type FactorySECP256K1R struct{ Cache cache.LRU }
@@ -175,6 +175,10 @@ func (k *PrivateKeySECP256K1R) PublicKey() PublicKey {
 	return k.pk
 }
 
+func (k *PrivateKeySECP256K1R) Address() ids.ShortID {
+	return k.PublicKey().Address()
+}
+
 func (k *PrivateKeySECP256K1R) Sign(msg []byte) ([]byte, error) {
 	return k.SignHash(hashing.ComputeHash256(msg))
 }
@@ -287,12 +291,22 @@ func verifySECP256K1RSignatureFormat(sig []byte) error {
 
 type innerSortSECP2561RSigs [][SECP256K1RSigLen]byte
 
-func (lst innerSortSECP2561RSigs) Less(i, j int) bool { return bytes.Compare(lst[i][:], lst[j][:]) < 0 }
-func (lst innerSortSECP2561RSigs) Len() int           { return len(lst) }
-func (lst innerSortSECP2561RSigs) Swap(i, j int)      { lst[j], lst[i] = lst[i], lst[j] }
+func (lst innerSortSECP2561RSigs) Less(i, j int) bool {
+	return bytes.Compare(lst[i][:], lst[j][:]) < 0
+}
+
+func (lst innerSortSECP2561RSigs) Len() int {
+	return len(lst)
+}
+
+func (lst innerSortSECP2561RSigs) Swap(i, j int) {
+	lst[j], lst[i] = lst[i], lst[j]
+}
 
 // SortSECP2561RSigs sorts a slice of SECP2561R signatures
-func SortSECP2561RSigs(lst [][SECP256K1RSigLen]byte) { sort.Sort(innerSortSECP2561RSigs(lst)) }
+func SortSECP2561RSigs(lst [][SECP256K1RSigLen]byte) {
+	sort.Sort(innerSortSECP2561RSigs(lst))
+}
 
 // IsSortedAndUniqueSECP2561RSigs returns true if [sigs] is sorted
 func IsSortedAndUniqueSECP2561RSigs(sigs [][SECP256K1RSigLen]byte) bool {

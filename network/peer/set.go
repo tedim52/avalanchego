@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package peer
@@ -8,9 +8,11 @@ import (
 	"github.com/ava-labs/avalanchego/utils/sampler"
 )
 
-var _ Set = &set{}
+var _ Set = (*set)(nil)
 
-func NoPrecondition(Peer) bool { return true }
+func NoPrecondition(Peer) bool {
+	return true
+}
 
 // Set contains a group of peers.
 type Set interface {
@@ -37,7 +39,7 @@ type Set interface {
 	Len() int
 
 	// Sample attempts to return a random slice of peers with length [n]. The
-	// slice will not inclide any duplicates. Only peers that cause the
+	// slice will not include any duplicates. Only peers that cause the
 	// [precondition] to return true will be returned in the slice.
 	Sample(n int, precondition func(Peer) bool) []Peer
 

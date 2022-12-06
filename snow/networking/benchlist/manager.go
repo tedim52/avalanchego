@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package benchlist
@@ -17,7 +17,7 @@ import (
 var (
 	errUnknownValidators = errors.New("unknown validator set for provided chain")
 
-	_ Manager = &manager{}
+	_ Manager = (*manager)(nil)
 )
 
 // Manager provides an interface for a benchlist to register whether
@@ -173,10 +173,22 @@ func (m *manager) RegisterFailure(chainID ids.ID, nodeID ids.NodeID) {
 type noBenchlist struct{}
 
 // NewNoBenchlist returns an empty benchlist that will never stop any queries
-func NewNoBenchlist() Manager { return &noBenchlist{} }
+func NewNoBenchlist() Manager {
+	return &noBenchlist{}
+}
 
-func (noBenchlist) RegisterChain(*snow.ConsensusContext) error { return nil }
-func (noBenchlist) RegisterResponse(ids.ID, ids.NodeID)        {}
-func (noBenchlist) RegisterFailure(ids.ID, ids.NodeID)         {}
-func (noBenchlist) IsBenched(ids.NodeID, ids.ID) bool          { return false }
-func (noBenchlist) GetBenched(ids.NodeID) []ids.ID             { return []ids.ID{} }
+func (noBenchlist) RegisterChain(*snow.ConsensusContext) error {
+	return nil
+}
+
+func (noBenchlist) RegisterResponse(ids.ID, ids.NodeID) {}
+
+func (noBenchlist) RegisterFailure(ids.ID, ids.NodeID) {}
+
+func (noBenchlist) IsBenched(ids.NodeID, ids.ID) bool {
+	return false
+}
+
+func (noBenchlist) GetBenched(ids.NodeID) []ids.ID {
+	return []ids.ID{}
+}

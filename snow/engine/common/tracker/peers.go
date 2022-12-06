@@ -1,9 +1,10 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package tracker
 
 import (
+	"context"
 	"sync"
 
 	"github.com/ava-labs/avalanchego/ids"
@@ -11,7 +12,7 @@ import (
 	"github.com/ava-labs/avalanchego/version"
 )
 
-var _ Peers = &peers{}
+var _ Peers = (*peers)(nil)
 
 type Peers interface {
 	validators.SetCallbackListener
@@ -77,7 +78,7 @@ func (p *peers) OnValidatorWeightChanged(nodeID ids.NodeID, oldWeight, newWeight
 	}
 }
 
-func (p *peers) Connected(nodeID ids.NodeID, _ *version.Application) error {
+func (p *peers) Connected(_ context.Context, nodeID ids.NodeID, _ *version.Application) error {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 
@@ -89,7 +90,7 @@ func (p *peers) Connected(nodeID ids.NodeID, _ *version.Application) error {
 	return nil
 }
 
-func (p *peers) Disconnected(nodeID ids.NodeID) error {
+func (p *peers) Disconnected(_ context.Context, nodeID ids.NodeID) error {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 

@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package poll
@@ -10,8 +10,8 @@ import (
 )
 
 var (
-	_ Factory = &earlyTermNoTraversalFactory{}
-	_ Poll    = &earlyTermNoTraversalPoll{}
+	_ Factory = (*earlyTermNoTraversalFactory)(nil)
+	_ Poll    = (*earlyTermNoTraversalPoll)(nil)
 )
 
 type earlyTermNoTraversalFactory struct {
@@ -70,7 +70,7 @@ func (p *earlyTermNoTraversalPoll) Finished() bool {
 	// votes will be applied to a single shared ancestor. In this case, the poll
 	// can terminate early, iff there are not enough pending votes for this
 	// ancestor to receive alpha votes.
-	partialVotes := ids.BitSet(0)
+	partialVotes := ids.BitSet64(0)
 	for _, vote := range p.votes.List() {
 		if voters := p.votes.GetSet(vote); voters.Len() < p.alpha {
 			partialVotes.Union(voters)
@@ -80,7 +80,9 @@ func (p *earlyTermNoTraversalPoll) Finished() bool {
 }
 
 // Result returns the result of this poll
-func (p *earlyTermNoTraversalPoll) Result() ids.UniqueBag { return p.votes }
+func (p *earlyTermNoTraversalPoll) Result() ids.UniqueBag {
+	return p.votes
+}
 
 func (p *earlyTermNoTraversalPoll) PrefixedString(prefix string) string {
 	return fmt.Sprintf(
@@ -91,4 +93,6 @@ func (p *earlyTermNoTraversalPoll) PrefixedString(prefix string) string {
 	)
 }
 
-func (p *earlyTermNoTraversalPoll) String() string { return p.PrefixedString("") }
+func (p *earlyTermNoTraversalPoll) String() string {
+	return p.PrefixedString("")
+}

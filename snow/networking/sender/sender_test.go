@@ -1,9 +1,10 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package sender
 
 import (
+	"context"
 	"math/rand"
 	"sync"
 	"testing"
@@ -11,7 +12,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/message"
@@ -38,9 +39,10 @@ var defaultGossipConfig = GossipConfig{
 }
 
 func TestTimeout(t *testing.T) {
+	require := require.New(t)
 	vdrs := validators.NewSet()
 	err := vdrs.AddWeight(ids.GenerateTestNodeID(), 1)
-	assert.NoError(t, err)
+	require.NoError(err)
 	benchlist := benchlist.NewNoBenchlist()
 	tm, err := timeout.NewManager(
 		&timer.AdaptiveTimeoutConfig{
@@ -54,41 +56,65 @@ func TestTimeout(t *testing.T) {
 		"",
 		prometheus.NewRegistry(),
 	)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(err)
 	go tm.Dispatch()
 
 	chainRouter := router.ChainRouter{}
-	metrics := prometheus.NewRegistry()
-	mc, err := message.NewCreator(metrics, true, "dummyNamespace", 10*time.Second)
-	assert.NoError(t, err)
-	err = chainRouter.Initialize(ids.EmptyNodeID, logging.NoLog{}, mc, tm, time.Second, ids.Set{}, ids.Set{}, nil, router.HealthConfig{}, "", prometheus.NewRegistry())
-	assert.NoError(t, err)
 
-	context := snow.DefaultConsensusContextTest()
+	metrics := prometheus.NewRegistry()
+	mc, err := message.NewCreator(
+		metrics,
+		"dummyNamespace",
+		true,
+		10*time.Second,
+	)
+	require.NoError(err)
+
+	err = chainRouter.Initialize(
+		ids.EmptyNodeID,
+		logging.NoLog{},
+		tm,
+		time.Second,
+		ids.Set{},
+		ids.Set{},
+		nil,
+		router.HealthConfig{},
+		"",
+		prometheus.NewRegistry(),
+	)
+	require.NoError(err)
+
+	ctx := snow.DefaultConsensusContextTest()
 	externalSender := &ExternalSenderTest{TB: t}
 	externalSender.Default(false)
 
-	sender, err := New(context, mc, externalSender, &chainRouter, tm, defaultGossipConfig)
-	assert.NoError(t, err)
-
-	wg := sync.WaitGroup{}
-	wg.Add(2)
-	failedVDRs := ids.NodeIDSet{}
-	ctx := snow.DefaultConsensusContextTest()
-	resourceTracker, err := tracker.NewResourceTracker(prometheus.NewRegistry(), resource.NoUsage, meter.ContinuousFactory{}, time.Second)
-	assert.NoError(t, err)
-	handler, err := handler.New(
-		mc,
+	sender, err := New(
 		ctx,
+		mc,
+		externalSender,
+		&chainRouter,
+		tm,
+		defaultGossipConfig,
+	)
+	require.NoError(err)
+
+	ctx2 := snow.DefaultConsensusContextTest()
+	resourceTracker, err := tracker.NewResourceTracker(
+		prometheus.NewRegistry(),
+		resource.NoUsage,
+		meter.ContinuousFactory{},
+		time.Second,
+	)
+	require.NoError(err)
+	handler, err := handler.New(
+		ctx2,
 		vdrs,
 		nil,
 		nil,
 		time.Hour,
 		resourceTracker,
 	)
-	assert.NoError(t, err)
+	require.NoError(err)
 
 	bootstrapper := &common.BootstrapperTest{
 		BootstrapableTest: common.BootstrapableTest{
@@ -100,38 +126,169 @@ func TestTimeout(t *testing.T) {
 	}
 	bootstrapper.Default(true)
 	bootstrapper.CantGossip = false
-	bootstrapper.ContextF = func() *snow.ConsensusContext { return ctx }
-	bootstrapper.ConnectedF = func(nodeID ids.NodeID, nodeVersion *version.Application) error { return nil }
-	bootstrapper.QueryFailedF = func(nodeID ids.NodeID, _ uint32) error {
+	bootstrapper.ContextF = func() *snow.ConsensusContext {
+		return ctx
+	}
+	bootstrapper.ConnectedF = func(context.Context, ids.NodeID, *version.Application) error {
+		return nil
+	}
+	handler.SetBootstrapper(bootstrapper)
+	ctx2.SetState(snow.Bootstrapping) // assumed bootstrap is ongoing
+
+	chainRouter.AddChain(context.Background(), handler)
+
+	bootstrapper.StartF = func(context.Context, uint32) error {
+		return nil
+	}
+	handler.Start(context.Background(), false)
+
+	var (
+		wg           = sync.WaitGroup{}
+		vdrIDs       = ids.NodeIDSet{}
+		chains       = ids.Set{}
+		requestID    uint32
+		failedLock   sync.Mutex
+		failedVDRs   = ids.NodeIDSet{}
+		failedChains = ids.Set{}
+	)
+
+	failed := func(_ context.Context, nodeID ids.NodeID, _ uint32) error {
+		failedLock.Lock()
+		defer failedLock.Unlock()
+
 		failedVDRs.Add(nodeID)
 		wg.Done()
 		return nil
 	}
-	handler.SetBootstrapper(bootstrapper)
-	ctx.SetState(snow.Bootstrapping) // assumed bootstrap is ongoing
 
-	chainRouter.AddChain(handler)
+	bootstrapper.GetStateSummaryFrontierFailedF = failed
+	bootstrapper.GetAcceptedStateSummaryFailedF = failed
+	bootstrapper.GetAcceptedFrontierFailedF = failed
+	bootstrapper.GetAcceptedFailedF = failed
+	bootstrapper.GetAncestorsFailedF = failed
+	bootstrapper.GetFailedF = failed
+	bootstrapper.QueryFailedF = failed
+	bootstrapper.AppRequestFailedF = failed
+	bootstrapper.CrossChainAppRequestFailedF = func(_ context.Context, chainID ids.ID, _ uint32) error {
+		failedLock.Lock()
+		defer failedLock.Unlock()
 
-	bootstrapper.StartF = func(startReqID uint32) error { return nil }
-	handler.Start(false)
+		failedChains.Add(chainID)
+		wg.Done()
+		return nil
+	}
 
-	vdrIDs := ids.NodeIDSet{}
-	vdrIDs.Add(ids.NodeID{255})
-	vdrIDs.Add(ids.NodeID{254})
+	sendAll := func() {
+		{
+			nodeIDs := ids.NodeIDSet{
+				ids.GenerateTestNodeID(): struct{}{},
+			}
+			vdrIDs.Union(nodeIDs)
+			wg.Add(1)
+			requestID++
+			sender.SendGetStateSummaryFrontier(context.Background(), nodeIDs, requestID)
+		}
+		{
+			nodeIDs := ids.NodeIDSet{
+				ids.GenerateTestNodeID(): struct{}{},
+			}
+			vdrIDs.Union(nodeIDs)
+			wg.Add(1)
+			requestID++
+			sender.SendGetAcceptedStateSummary(context.Background(), nodeIDs, requestID, nil)
+		}
+		{
+			nodeIDs := ids.NodeIDSet{
+				ids.GenerateTestNodeID(): struct{}{},
+			}
+			vdrIDs.Union(nodeIDs)
+			wg.Add(1)
+			requestID++
+			sender.SendGetAcceptedFrontier(context.Background(), nodeIDs, requestID)
+		}
+		{
+			nodeIDs := ids.NodeIDSet{
+				ids.GenerateTestNodeID(): struct{}{},
+			}
+			vdrIDs.Union(nodeIDs)
+			wg.Add(1)
+			requestID++
+			sender.SendGetAccepted(context.Background(), nodeIDs, requestID, nil)
+		}
+		{
+			nodeID := ids.GenerateTestNodeID()
+			vdrIDs.Add(nodeID)
+			wg.Add(1)
+			requestID++
+			sender.SendGetAncestors(context.Background(), nodeID, requestID, ids.Empty)
+		}
+		{
+			nodeID := ids.GenerateTestNodeID()
+			vdrIDs.Add(nodeID)
+			wg.Add(1)
+			requestID++
+			sender.SendGet(context.Background(), nodeID, requestID, ids.Empty)
+		}
+		{
+			nodeIDs := ids.NodeIDSet{
+				ids.GenerateTestNodeID(): struct{}{},
+			}
+			vdrIDs.Union(nodeIDs)
+			wg.Add(1)
+			requestID++
+			sender.SendPullQuery(context.Background(), nodeIDs, requestID, ids.Empty)
+		}
+		{
+			nodeIDs := ids.NodeIDSet{
+				ids.GenerateTestNodeID(): struct{}{},
+			}
+			vdrIDs.Union(nodeIDs)
+			wg.Add(1)
+			requestID++
+			sender.SendPushQuery(context.Background(), nodeIDs, requestID, nil)
+		}
+		{
+			nodeIDs := ids.NodeIDSet{
+				ids.GenerateTestNodeID(): struct{}{},
+			}
+			vdrIDs.Union(nodeIDs)
+			wg.Add(1)
+			requestID++
+			err := sender.SendAppRequest(context.Background(), nodeIDs, requestID, nil)
+			require.NoError(err)
+		}
+		{
+			chainID := ids.GenerateTestID()
+			chains.Add(chainID)
+			wg.Add(1)
+			requestID++
+			err := sender.SendCrossChainAppRequest(context.Background(), chainID, requestID, nil)
+			require.NoError(err)
+		}
+	}
 
-	sender.SendPullQuery(vdrIDs, 0, ids.Empty)
+	// Send messages to disconnected peers
+	externalSender.SendF = func(_ message.OutboundMessage, nodeIDs ids.NodeIDSet, _ ids.ID, _ bool) ids.NodeIDSet {
+		return nil
+	}
+	sendAll()
+
+	// Send messages to connected peers
+	externalSender.SendF = func(_ message.OutboundMessage, nodeIDs ids.NodeIDSet, _ ids.ID, _ bool) ids.NodeIDSet {
+		return nodeIDs
+	}
+	sendAll()
 
 	wg.Wait()
 
-	if !failedVDRs.Equals(vdrIDs) {
-		t.Fatalf("Timeouts should have fired")
-	}
+	require.Equal(vdrIDs, failedVDRs)
+	require.Equal(chains, failedChains)
 }
 
 func TestReliableMessages(t *testing.T) {
 	vdrs := validators.NewSet()
 	err := vdrs.AddWeight(ids.NodeID{1}, 1)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	benchlist := benchlist.NewNoBenchlist()
 	tm, err := timeout.NewManager(
 		&timer.AdaptiveTimeoutConfig{
@@ -145,39 +302,67 @@ func TestReliableMessages(t *testing.T) {
 		"",
 		prometheus.NewRegistry(),
 	)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
+
 	go tm.Dispatch()
 
 	chainRouter := router.ChainRouter{}
-	metrics := prometheus.NewRegistry()
-	mc, err := message.NewCreator(metrics, true, "dummyNamespace", 10*time.Second)
-	assert.NoError(t, err)
-	err = chainRouter.Initialize(ids.EmptyNodeID, logging.NoLog{}, mc, tm, time.Second, ids.Set{}, ids.Set{}, nil, router.HealthConfig{}, "", prometheus.NewRegistry())
-	assert.NoError(t, err)
 
-	context := snow.DefaultConsensusContextTest()
+	metrics := prometheus.NewRegistry()
+	mc, err := message.NewCreator(
+		metrics,
+		"dummyNamespace",
+		true,
+		10*time.Second,
+	)
+	require.NoError(t, err)
+
+	err = chainRouter.Initialize(
+		ids.EmptyNodeID,
+		logging.NoLog{},
+		tm,
+		time.Second,
+		ids.Set{},
+		ids.Set{},
+		nil,
+		router.HealthConfig{},
+		"",
+		prometheus.NewRegistry(),
+	)
+	require.NoError(t, err)
+
+	ctx := snow.DefaultConsensusContextTest()
 
 	externalSender := &ExternalSenderTest{TB: t}
 	externalSender.Default(false)
 
-	sender, err := New(context, mc, externalSender, &chainRouter, tm, defaultGossipConfig)
-	assert.NoError(t, err)
-
-	ctx := snow.DefaultConsensusContextTest()
-	resourceTracker, err := tracker.NewResourceTracker(prometheus.NewRegistry(), resource.NoUsage, meter.ContinuousFactory{}, time.Second)
-	assert.NoError(t, err)
-	handler, err := handler.New(
-		mc,
+	sender, err := New(
 		ctx,
+		mc,
+		externalSender,
+		&chainRouter,
+		tm,
+		defaultGossipConfig,
+	)
+	require.NoError(t, err)
+
+	ctx2 := snow.DefaultConsensusContextTest()
+	resourceTracker, err := tracker.NewResourceTracker(
+		prometheus.NewRegistry(),
+		resource.NoUsage,
+		meter.ContinuousFactory{},
+		time.Second,
+	)
+	require.NoError(t, err)
+	handler, err := handler.New(
+		ctx2,
 		vdrs,
 		nil,
 		nil,
 		1,
 		resourceTracker,
 	)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	bootstrapper := &common.BootstrapperTest{
 		BootstrapableTest: common.BootstrapableTest{
@@ -189,32 +374,38 @@ func TestReliableMessages(t *testing.T) {
 	}
 	bootstrapper.Default(true)
 	bootstrapper.CantGossip = false
-	bootstrapper.ContextF = func() *snow.ConsensusContext { return ctx }
-	bootstrapper.ConnectedF = func(nodeID ids.NodeID, nodeVersion *version.Application) error { return nil }
+	bootstrapper.ContextF = func() *snow.ConsensusContext {
+		return ctx2
+	}
+	bootstrapper.ConnectedF = func(context.Context, ids.NodeID, *version.Application) error {
+		return nil
+	}
 	queriesToSend := 1000
 	awaiting := make([]chan struct{}, queriesToSend)
 	for i := 0; i < queriesToSend; i++ {
 		awaiting[i] = make(chan struct{}, 1)
 	}
-	bootstrapper.QueryFailedF = func(nodeID ids.NodeID, reqID uint32) error {
+	bootstrapper.QueryFailedF = func(_ context.Context, _ ids.NodeID, reqID uint32) error {
 		close(awaiting[int(reqID)])
 		return nil
 	}
 	bootstrapper.CantGossip = false
 	handler.SetBootstrapper(bootstrapper)
-	ctx.SetState(snow.Bootstrapping) // assumed bootstrap is ongoing
+	ctx2.SetState(snow.Bootstrapping) // assumed bootstrap is ongoing
 
-	chainRouter.AddChain(handler)
+	chainRouter.AddChain(context.Background(), handler)
 
-	bootstrapper.StartF = func(startReqID uint32) error { return nil }
-	handler.Start(false)
+	bootstrapper.StartF = func(context.Context, uint32) error {
+		return nil
+	}
+	handler.Start(context.Background(), false)
 
 	go func() {
 		for i := 0; i < queriesToSend; i++ {
 			vdrIDs := ids.NodeIDSet{}
 			vdrIDs.Add(ids.NodeID{1})
 
-			sender.SendPullQuery(vdrIDs, uint32(i), ids.Empty)
+			sender.SendPullQuery(context.Background(), vdrIDs, uint32(i), ids.Empty)
 			time.Sleep(time.Duration(rand.Float64() * float64(time.Microsecond))) // #nosec G404
 		}
 	}()
@@ -228,7 +419,7 @@ func TestReliableMessagesToMyself(t *testing.T) {
 	benchlist := benchlist.NewNoBenchlist()
 	vdrs := validators.NewSet()
 	err := vdrs.AddWeight(ids.GenerateTestNodeID(), 1)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	tm, err := timeout.NewManager(
 		&timer.AdaptiveTimeoutConfig{
 			InitialTimeout:     10 * time.Millisecond,
@@ -241,39 +432,60 @@ func TestReliableMessagesToMyself(t *testing.T) {
 		"",
 		prometheus.NewRegistry(),
 	)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
+
 	go tm.Dispatch()
 
 	chainRouter := router.ChainRouter{}
-	metrics := prometheus.NewRegistry()
-	mc, err := message.NewCreator(metrics, true, "dummyNamespace", 10*time.Second)
-	assert.NoError(t, err)
-	err = chainRouter.Initialize(ids.EmptyNodeID, logging.NoLog{}, mc, tm, time.Second, ids.Set{}, ids.Set{}, nil, router.HealthConfig{}, "", prometheus.NewRegistry())
-	assert.NoError(t, err)
 
-	context := snow.DefaultConsensusContextTest()
+	metrics := prometheus.NewRegistry()
+	mc, err := message.NewCreator(
+		metrics,
+		"dummyNamespace",
+		true,
+		10*time.Second,
+	)
+	require.NoError(t, err)
+
+	err = chainRouter.Initialize(
+		ids.EmptyNodeID,
+		logging.NoLog{},
+		tm,
+		time.Second,
+		ids.Set{},
+		ids.Set{},
+		nil,
+		router.HealthConfig{},
+		"",
+		prometheus.NewRegistry(),
+	)
+	require.NoError(t, err)
+
+	ctx := snow.DefaultConsensusContextTest()
 
 	externalSender := &ExternalSenderTest{TB: t}
 	externalSender.Default(false)
 
-	sender, err := New(context, mc, externalSender, &chainRouter, tm, defaultGossipConfig)
-	assert.NoError(t, err)
+	sender, err := New(ctx, mc, externalSender, &chainRouter, tm, defaultGossipConfig)
+	require.NoError(t, err)
 
-	ctx := snow.DefaultConsensusContextTest()
-	resourceTracker, err := tracker.NewResourceTracker(prometheus.NewRegistry(), resource.NoUsage, meter.ContinuousFactory{}, time.Second)
-	assert.NoError(t, err)
+	ctx2 := snow.DefaultConsensusContextTest()
+	resourceTracker, err := tracker.NewResourceTracker(
+		prometheus.NewRegistry(),
+		resource.NoUsage,
+		meter.ContinuousFactory{},
+		time.Second,
+	)
+	require.NoError(t, err)
 	handler, err := handler.New(
-		mc,
-		ctx,
+		ctx2,
 		vdrs,
 		nil,
 		nil,
 		time.Second,
 		resourceTracker,
 	)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	bootstrapper := &common.BootstrapperTest{
 		BootstrapableTest: common.BootstrapableTest{
@@ -285,24 +497,30 @@ func TestReliableMessagesToMyself(t *testing.T) {
 	}
 	bootstrapper.Default(true)
 	bootstrapper.CantGossip = false
-	bootstrapper.ContextF = func() *snow.ConsensusContext { return ctx }
-	bootstrapper.ConnectedF = func(nodeID ids.NodeID, nodeVersion *version.Application) error { return nil }
+	bootstrapper.ContextF = func() *snow.ConsensusContext {
+		return ctx2
+	}
+	bootstrapper.ConnectedF = func(context.Context, ids.NodeID, *version.Application) error {
+		return nil
+	}
 	queriesToSend := 2
 	awaiting := make([]chan struct{}, queriesToSend)
 	for i := 0; i < queriesToSend; i++ {
 		awaiting[i] = make(chan struct{}, 1)
 	}
-	bootstrapper.QueryFailedF = func(nodeID ids.NodeID, reqID uint32) error {
+	bootstrapper.QueryFailedF = func(_ context.Context, _ ids.NodeID, reqID uint32) error {
 		close(awaiting[int(reqID)])
 		return nil
 	}
 	handler.SetBootstrapper(bootstrapper)
-	ctx.SetState(snow.Bootstrapping) // assumed bootstrap is ongoing
+	ctx2.SetState(snow.Bootstrapping) // assumed bootstrap is ongoing
 
-	chainRouter.AddChain(handler)
+	chainRouter.AddChain(context.Background(), handler)
 
-	bootstrapper.StartF = func(startReqID uint32) error { return nil }
-	handler.Start(false)
+	bootstrapper.StartF = func(context.Context, uint32) error {
+		return nil
+	}
+	handler.Start(context.Background(), false)
 
 	go func() {
 		for i := 0; i < queriesToSend; i++ {
@@ -311,7 +529,7 @@ func TestReliableMessagesToMyself(t *testing.T) {
 			// a query failed message
 			vdrIDs := ids.NodeIDSet{}
 			vdrIDs.Add(ids.GenerateTestNodeID())
-			sender.SendPullQuery(vdrIDs, uint32(i), ids.Empty)
+			sender.SendPullQuery(context.Background(), vdrIDs, uint32(i), ids.Empty)
 		}
 	}()
 

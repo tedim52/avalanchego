@@ -1,10 +1,11 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package avm
 
 import (
 	"container/list"
+	"context"
 	"errors"
 	"fmt"
 	"reflect"
@@ -15,6 +16,8 @@ import (
 	"github.com/gorilla/rpc/v2"
 
 	"github.com/prometheus/client_golang/prometheus"
+
+	"go.uber.org/zap"
 
 	"github.com/ava-labs/avalanchego/cache"
 	"github.com/ava-labs/avalanchego/database"
@@ -59,7 +62,7 @@ var (
 	errBootstrapping             = errors.New("chain is currently bootstrapping")
 	errInsufficientFunds         = errors.New("insufficient funds")
 
-	_ vertex.DAGVM = &VM{}
+	_ vertex.DAGVM = (*VM)(nil)
 )
 
 type VM struct {
@@ -110,11 +113,11 @@ type VM struct {
 	uniqueTxs cache.Deduplicator
 }
 
-func (vm *VM) Connected(nodeID ids.NodeID, nodeVersion *version.Application) error {
+func (*VM) Connected(context.Context, ids.NodeID, *version.Application) error {
 	return nil
 }
 
-func (vm *VM) Disconnected(nodeID ids.NodeID) error {
+func (*VM) Disconnected(context.Context, ids.NodeID) error {
 	return nil
 }
 
@@ -130,10 +133,11 @@ type Config struct {
 }
 
 func (vm *VM) Initialize(
+	_ context.Context,
 	ctx *snow.Context,
 	dbManager manager.Manager,
 	genesisBytes []byte,
-	upgradeBytes []byte,
+	_ []byte,
 	configBytes []byte,
 	toEngine chan<- common.Message,
 	fxs []*common.Fx,
@@ -144,7 +148,9 @@ func (vm *VM) Initialize(
 		if err := stdjson.Unmarshal(configBytes, &avmConfig); err != nil {
 			return err
 		}
-		ctx.Log.Info("VM config initialized %+v", avmConfig)
+		ctx.Log.Info("VM config initialized",
+			zap.Reflect("config", avmConfig),
+		)
 	}
 
 	registerer := prometheus.NewRegistry()
@@ -166,7 +172,7 @@ func (vm *VM) Initialize(
 	vm.db = versiondb.New(db)
 	vm.assetToFxCache = &cache.LRU{Size: assetToFxCacheSize}
 
-	vm.pubsub = pubsub.New(ctx.NetworkID, ctx.Log)
+	vm.pubsub = pubsub.New(ctx.Log)
 
 	typedFxs := make([]extensions.Fx, len(fxs))
 	vm.fxs = make([]*extensions.ParsedFx, len(fxs))
@@ -262,7 +268,7 @@ func (vm *VM) onNormalOperationsStarted() error {
 	return nil
 }
 
-func (vm *VM) SetState(state snow.State) error {
+func (vm *VM) SetState(_ context.Context, state snow.State) error {
 	switch state {
 	case snow.Bootstrapping:
 		return vm.onBootstrapStarted()
@@ -273,7 +279,7 @@ func (vm *VM) SetState(state snow.State) error {
 	}
 }
 
-func (vm *VM) Shutdown() error {
+func (vm *VM) Shutdown(context.Context) error {
 	if vm.timer == nil {
 		return nil
 	}
@@ -287,11 +293,11 @@ func (vm *VM) Shutdown() error {
 	return vm.baseDB.Close()
 }
 
-func (vm *VM) Version() (string, error) {
+func (*VM) Version(context.Context) (string, error) {
 	return version.Current.String(), nil
 }
 
-func (vm *VM) CreateHandlers() (map[string]*common.HTTPHandler, error) {
+func (vm *VM) CreateHandlers(context.Context) (map[string]*common.HTTPHandler, error) {
 	codec := json.NewCodec()
 
 	rpcServer := rpc.NewServer()
@@ -319,7 +325,7 @@ func (vm *VM) CreateHandlers() (map[string]*common.HTTPHandler, error) {
 	}, err
 }
 
-func (vm *VM) CreateStaticHandlers() (map[string]*common.HTTPHandler, error) {
+func (*VM) CreateStaticHandlers(context.Context) (map[string]*common.HTTPHandler, error) {
 	newServer := rpc.NewServer()
 	codec := json.NewCodec()
 	newServer.RegisterCodec(codec, "application/json")
@@ -332,7 +338,7 @@ func (vm *VM) CreateStaticHandlers() (map[string]*common.HTTPHandler, error) {
 	}, newServer.RegisterService(staticService, "avm")
 }
 
-func (vm *VM) PendingTxs() []snowstorm.Tx {
+func (vm *VM) PendingTxs(context.Context) []snowstorm.Tx {
 	vm.timer.Cancel()
 
 	txs := vm.txs
@@ -340,11 +346,11 @@ func (vm *VM) PendingTxs() []snowstorm.Tx {
 	return txs
 }
 
-func (vm *VM) ParseTx(b []byte) (snowstorm.Tx, error) {
+func (vm *VM) ParseTx(_ context.Context, b []byte) (snowstorm.Tx, error) {
 	return vm.parseTx(b)
 }
 
-func (vm *VM) GetTx(txID ids.ID) (snowstorm.Tx, error) {
+func (vm *VM) GetTx(_ context.Context, txID ids.ID) (snowstorm.Tx, error) {
 	tx := &UniqueTx{
 		vm:   vm,
 		txID: txID,
@@ -451,7 +457,10 @@ func (vm *VM) initGenesis(genesisBytes []byte) error {
 			}
 		}
 		if index == 0 {
-			vm.ctx.Log.Info("Fee payments are using Asset with Alias: %s, AssetID: %s", genesisTx.Alias, txID)
+			vm.ctx.Log.Info("fee asset is established",
+				zap.String("alias", genesisTx.Alias),
+				zap.Stringer("assetID", txID),
+			)
 			vm.feeAssetID = txID
 		}
 	}
@@ -465,7 +474,9 @@ func (vm *VM) initGenesis(genesisBytes []byte) error {
 
 func (vm *VM) initState(tx txs.Tx) error {
 	txID := tx.ID()
-	vm.ctx.Log.Info("initializing with AssetID %s", txID)
+	vm.ctx.Log.Info("initializing genesis asset",
+		zap.Stringer("txID", txID),
+	)
 	if err := vm.state.PutTx(txID, &tx); err != nil {
 		return err
 	}
@@ -559,7 +570,7 @@ func (vm *VM) verifyFxUsage(fxID int, assetID ids.ID) bool {
 	// Check cache to see whether this asset supports this fx
 	fxIDsIntf, assetInCache := vm.assetToFxCache.Get(assetID)
 	if assetInCache {
-		return fxIDsIntf.(ids.BitSet).Contains(uint(fxID))
+		return fxIDsIntf.(ids.BitSet64).Contains(uint(fxID))
 	}
 	// Caches doesn't say whether this asset support this fx.
 	// Get the tx that created the asset and check.
@@ -575,7 +586,7 @@ func (vm *VM) verifyFxUsage(fxID int, assetID ids.ID) bool {
 		// This transaction was not an asset creation tx
 		return false
 	}
-	fxIDs := ids.BitSet(0)
+	fxIDs := ids.BitSet64(0)
 	for _, state := range createAssetTx.States {
 		if state.FxIndex == uint32(fxID) {
 			// Cache that this asset supports this fx
@@ -1037,23 +1048,35 @@ func (vm *VM) lookupAssetID(asset string) (ids.ID, error) {
 	return ids.ID{}, fmt.Errorf("asset '%s' not found", asset)
 }
 
-// This VM doesn't (currently) have any app-specific messages
-func (vm *VM) AppRequest(nodeID ids.NodeID, requestID uint32, deadline time.Time, request []byte) error {
+func (*VM) CrossChainAppRequest(context.Context, ids.ID, uint32, time.Time, []byte) error {
+	return nil
+}
+
+func (*VM) CrossChainAppRequestFailed(context.Context, ids.ID, uint32) error {
+	return nil
+}
+
+func (*VM) CrossChainAppResponse(context.Context, ids.ID, uint32, []byte) error {
 	return nil
 }
 
 // This VM doesn't (currently) have any app-specific messages
-func (vm *VM) AppResponse(nodeID ids.NodeID, requestID uint32, response []byte) error {
+func (*VM) AppRequest(context.Context, ids.NodeID, uint32, time.Time, []byte) error {
 	return nil
 }
 
 // This VM doesn't (currently) have any app-specific messages
-func (vm *VM) AppRequestFailed(nodeID ids.NodeID, requestID uint32) error {
+func (*VM) AppResponse(context.Context, ids.NodeID, uint32, []byte) error {
 	return nil
 }
 
 // This VM doesn't (currently) have any app-specific messages
-func (vm *VM) AppGossip(nodeID ids.NodeID, msg []byte) error {
+func (*VM) AppRequestFailed(context.Context, ids.NodeID, uint32) error {
+	return nil
+}
+
+// This VM doesn't (currently) have any app-specific messages
+func (*VM) AppGossip(context.Context, ids.NodeID, []byte) error {
 	return nil
 }
 

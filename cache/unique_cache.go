@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package cache
@@ -8,7 +8,7 @@ import (
 	"sync"
 )
 
-var _ Deduplicator = &EvictableLRU{}
+var _ Deduplicator = (*EvictableLRU)(nil)
 
 // EvictableLRU is an LRU cache that notifies the objects when they are evicted.
 type EvictableLRU struct {

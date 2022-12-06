@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2021, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package state
@@ -17,14 +17,12 @@ import (
 	"github.com/ava-labs/avalanchego/vms/proposervm/block"
 )
 
-const (
-	blockCacheSize = 8192
-)
+const blockCacheSize = 8192
 
 var (
 	errBlockWrongVersion = errors.New("wrong version")
 
-	_ BlockState = &blockState{}
+	_ BlockState = (*blockState)(nil)
 )
 
 type BlockState interface {
