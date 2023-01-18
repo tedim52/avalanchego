@@ -16,9 +16,12 @@ import (
 	"github.com/ava-labs/avalanchego/snow/choices"
 	"github.com/ava-labs/avalanchego/snow/consensus/snowstorm"
 	"github.com/ava-labs/avalanchego/snow/engine/avalanche/vertex"
+	"github.com/ava-labs/avalanchego/utils/compare"
 	"github.com/ava-labs/avalanchego/utils/hashing"
 	"github.com/ava-labs/avalanchego/version"
 )
+
+var errUnknownTx = errors.New("unknown tx")
 
 func newTestSerializer(t *testing.T, parse func(context.Context, []byte) (snowstorm.Tx, error)) *Serializer {
 	vm := vertex.TestVM{}
@@ -308,7 +311,7 @@ func TestParseVertexWithIncorrectChainID(t *testing.T) {
 		if bytes.Equal(b, []byte{1}) {
 			return &snowstorm.TestTx{}, nil
 		}
-		return nil, errors.New("invalid tx")
+		return nil, errUnknownTx
 	})
 
 	if _, err := s.ParseVtx(context.Background(), vtxBytes); err == nil {
@@ -331,12 +334,10 @@ func TestParseVertexWithInvalidTxs(t *testing.T) {
 
 	s := newTestSerializer(t, func(_ context.Context, b []byte) (snowstorm.Tx, error) {
 		switch {
-		case bytes.Equal(b, []byte{1}):
-			return nil, errors.New("invalid tx")
 		case bytes.Equal(b, []byte{2}):
 			return &snowstorm.TestTx{}, nil
 		default:
-			return nil, errors.New("invalid tx")
+			return nil, errUnknownTx
 		}
 	})
 
@@ -444,7 +445,7 @@ func TestStopVertexWhitelistWithParents(t *testing.T) {
 		uvtx4.ID(),
 		svtx5.ID(),
 	}
-	if !ids.UnsortedEquals(whitelist.List(), expectedWhitelist) {
+	if !compare.UnsortedEquals(whitelist.List(), expectedWhitelist) {
 		t.Fatalf("whitelist expected %v, got %v", expectedWhitelist, whitelist)
 	}
 }
@@ -486,7 +487,7 @@ func TestStopVertexWhitelistWithLinearChain(t *testing.T) {
 		uvtx3.ID(),
 		uvtx4.ID(),
 	}
-	if !ids.UnsortedEquals(whitelist.List(), expectedWhitelist) {
+	if !compare.UnsortedEquals(whitelist.List(), expectedWhitelist) {
 		t.Fatalf("whitelist expected %v, got %v", expectedWhitelist, whitelist)
 	}
 }
@@ -666,7 +667,7 @@ func generateTestTxs(idSlice ...byte) ([]snowstorm.Tx, func(context.Context, []b
 	parseTx := func(_ context.Context, b []byte) (snowstorm.Tx, error) {
 		tx, ok := bytesToTx[string(b)]
 		if !ok {
-			return nil, errors.New("unknown tx bytes")
+			return nil, errUnknownTx
 		}
 		return tx, nil
 	}

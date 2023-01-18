@@ -10,12 +10,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/golang/mock/gomock"
+
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/message"
+	"github.com/ava-labs/avalanchego/proto/pb/p2p"
 	"github.com/ava-labs/avalanchego/snow"
 	"github.com/ava-labs/avalanchego/snow/engine/common"
 	"github.com/ava-labs/avalanchego/snow/networking/benchlist"
@@ -27,6 +30,7 @@ import (
 	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/avalanchego/utils/math/meter"
 	"github.com/ava-labs/avalanchego/utils/resource"
+	"github.com/ava-labs/avalanchego/utils/set"
 	"github.com/ava-labs/avalanchego/utils/timer"
 	"github.com/ava-labs/avalanchego/version"
 )
@@ -41,7 +45,7 @@ var defaultGossipConfig = GossipConfig{
 func TestTimeout(t *testing.T) {
 	require := require.New(t)
 	vdrs := validators.NewSet()
-	err := vdrs.AddWeight(ids.GenerateTestNodeID(), 1)
+	err := vdrs.Add(ids.GenerateTestNodeID(), nil, ids.Empty, 1)
 	require.NoError(err)
 	benchlist := benchlist.NewNoBenchlist()
 	tm, err := timeout.NewManager(
@@ -75,8 +79,9 @@ func TestTimeout(t *testing.T) {
 		logging.NoLog{},
 		tm,
 		time.Second,
-		ids.Set{},
-		ids.Set{},
+		set.Set[ids.ID]{},
+		true,
+		set.Set[ids.ID]{},
 		nil,
 		router.HealthConfig{},
 		"",
@@ -95,6 +100,7 @@ func TestTimeout(t *testing.T) {
 		&chainRouter,
 		tm,
 		defaultGossipConfig,
+		p2p.EngineType_ENGINE_TYPE_SNOWMAN,
 	)
 	require.NoError(err)
 
@@ -112,7 +118,9 @@ func TestTimeout(t *testing.T) {
 		nil,
 		nil,
 		time.Hour,
+		p2p.EngineType_ENGINE_TYPE_SNOWMAN,
 		resourceTracker,
+		validators.UnhandledSubnetConnector,
 	)
 	require.NoError(err)
 
@@ -144,15 +152,20 @@ func TestTimeout(t *testing.T) {
 
 	var (
 		wg           = sync.WaitGroup{}
-		vdrIDs       = ids.NodeIDSet{}
-		chains       = ids.Set{}
+		vdrIDs       = set.Set[ids.NodeID]{}
+		chains       = set.Set[ids.ID]{}
 		requestID    uint32
 		failedLock   sync.Mutex
-		failedVDRs   = ids.NodeIDSet{}
-		failedChains = ids.Set{}
+		failedVDRs   = set.Set[ids.NodeID]{}
+		failedChains = set.Set[ids.ID]{}
 	)
 
-	failed := func(_ context.Context, nodeID ids.NodeID, _ uint32) error {
+	cancelledCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	failed := func(ctx context.Context, nodeID ids.NodeID, _ uint32) error {
+		require.NoError(ctx.Err())
+
 		failedLock.Lock()
 		defer failedLock.Unlock()
 
@@ -169,7 +182,9 @@ func TestTimeout(t *testing.T) {
 	bootstrapper.GetFailedF = failed
 	bootstrapper.QueryFailedF = failed
 	bootstrapper.AppRequestFailedF = failed
-	bootstrapper.CrossChainAppRequestFailedF = func(_ context.Context, chainID ids.ID, _ uint32) error {
+	bootstrapper.CrossChainAppRequestFailedF = func(ctx context.Context, chainID ids.ID, _ uint32) error {
+		require.NoError(ctx.Err())
+
 		failedLock.Lock()
 		defer failedLock.Unlock()
 
@@ -180,81 +195,81 @@ func TestTimeout(t *testing.T) {
 
 	sendAll := func() {
 		{
-			nodeIDs := ids.NodeIDSet{
+			nodeIDs := set.Set[ids.NodeID]{
 				ids.GenerateTestNodeID(): struct{}{},
 			}
 			vdrIDs.Union(nodeIDs)
 			wg.Add(1)
 			requestID++
-			sender.SendGetStateSummaryFrontier(context.Background(), nodeIDs, requestID)
+			sender.SendGetStateSummaryFrontier(cancelledCtx, nodeIDs, requestID)
 		}
 		{
-			nodeIDs := ids.NodeIDSet{
+			nodeIDs := set.Set[ids.NodeID]{
 				ids.GenerateTestNodeID(): struct{}{},
 			}
 			vdrIDs.Union(nodeIDs)
 			wg.Add(1)
 			requestID++
-			sender.SendGetAcceptedStateSummary(context.Background(), nodeIDs, requestID, nil)
+			sender.SendGetAcceptedStateSummary(cancelledCtx, nodeIDs, requestID, nil)
 		}
 		{
-			nodeIDs := ids.NodeIDSet{
+			nodeIDs := set.Set[ids.NodeID]{
 				ids.GenerateTestNodeID(): struct{}{},
 			}
 			vdrIDs.Union(nodeIDs)
 			wg.Add(1)
 			requestID++
-			sender.SendGetAcceptedFrontier(context.Background(), nodeIDs, requestID)
+			sender.SendGetAcceptedFrontier(cancelledCtx, nodeIDs, requestID)
 		}
 		{
-			nodeIDs := ids.NodeIDSet{
+			nodeIDs := set.Set[ids.NodeID]{
 				ids.GenerateTestNodeID(): struct{}{},
 			}
 			vdrIDs.Union(nodeIDs)
 			wg.Add(1)
 			requestID++
-			sender.SendGetAccepted(context.Background(), nodeIDs, requestID, nil)
+			sender.SendGetAccepted(cancelledCtx, nodeIDs, requestID, nil)
 		}
 		{
 			nodeID := ids.GenerateTestNodeID()
 			vdrIDs.Add(nodeID)
 			wg.Add(1)
 			requestID++
-			sender.SendGetAncestors(context.Background(), nodeID, requestID, ids.Empty)
+			sender.SendGetAncestors(cancelledCtx, nodeID, requestID, ids.Empty)
 		}
 		{
 			nodeID := ids.GenerateTestNodeID()
 			vdrIDs.Add(nodeID)
 			wg.Add(1)
 			requestID++
-			sender.SendGet(context.Background(), nodeID, requestID, ids.Empty)
+			sender.SendGet(cancelledCtx, nodeID, requestID, ids.Empty)
 		}
 		{
-			nodeIDs := ids.NodeIDSet{
+			nodeIDs := set.Set[ids.NodeID]{
 				ids.GenerateTestNodeID(): struct{}{},
 			}
 			vdrIDs.Union(nodeIDs)
 			wg.Add(1)
 			requestID++
-			sender.SendPullQuery(context.Background(), nodeIDs, requestID, ids.Empty)
+			sender.SendPullQuery(cancelledCtx, nodeIDs, requestID, ids.Empty)
 		}
 		{
-			nodeIDs := ids.NodeIDSet{
+			nodeIDs := set.Set[ids.NodeID]{
 				ids.GenerateTestNodeID(): struct{}{},
 			}
 			vdrIDs.Union(nodeIDs)
 			wg.Add(1)
 			requestID++
-			sender.SendPushQuery(context.Background(), nodeIDs, requestID, nil)
+			sender.SendPushQuery(cancelledCtx, nodeIDs, requestID, nil)
 		}
 		{
-			nodeIDs := ids.NodeIDSet{
+			nodeIDs := set.Set[ids.NodeID]{
 				ids.GenerateTestNodeID(): struct{}{},
 			}
 			vdrIDs.Union(nodeIDs)
 			wg.Add(1)
 			requestID++
-			err := sender.SendAppRequest(context.Background(), nodeIDs, requestID, nil)
+			err := sender.SendAppRequest(cancelledCtx, nodeIDs, requestID, nil)
 			require.NoError(err)
 		}
 		{
@@ -262,19 +277,19 @@ func TestTimeout(t *testing.T) {
 			chains.Add(chainID)
 			wg.Add(1)
 			requestID++
-			err := sender.SendCrossChainAppRequest(context.Background(), chainID, requestID, nil)
+			err := sender.SendCrossChainAppRequest(cancelledCtx, chainID, requestID, nil)
 			require.NoError(err)
 		}
 	}
 
 	// Send messages to disconnected peers
-	externalSender.SendF = func(_ message.OutboundMessage, nodeIDs ids.NodeIDSet, _ ids.ID, _ bool) ids.NodeIDSet {
+	externalSender.SendF = func(_ message.OutboundMessage, nodeIDs set.Set[ids.NodeID], _ ids.ID, _ bool) set.Set[ids.NodeID] {
 		return nil
 	}
 	sendAll()
 
 	// Send messages to connected peers
-	externalSender.SendF = func(_ message.OutboundMessage, nodeIDs ids.NodeIDSet, _ ids.ID, _ bool) ids.NodeIDSet {
+	externalSender.SendF = func(_ message.OutboundMessage, nodeIDs set.Set[ids.NodeID], _ ids.ID, _ bool) set.Set[ids.NodeID] {
 		return nodeIDs
 	}
 	sendAll()
@@ -287,7 +302,7 @@ func TestTimeout(t *testing.T) {
 
 func TestReliableMessages(t *testing.T) {
 	vdrs := validators.NewSet()
-	err := vdrs.AddWeight(ids.NodeID{1}, 1)
+	err := vdrs.Add(ids.NodeID{1}, nil, ids.Empty, 1)
 	require.NoError(t, err)
 	benchlist := benchlist.NewNoBenchlist()
 	tm, err := timeout.NewManager(
@@ -322,8 +337,9 @@ func TestReliableMessages(t *testing.T) {
 		logging.NoLog{},
 		tm,
 		time.Second,
-		ids.Set{},
-		ids.Set{},
+		set.Set[ids.ID]{},
+		true,
+		set.Set[ids.ID]{},
 		nil,
 		router.HealthConfig{},
 		"",
@@ -343,6 +359,7 @@ func TestReliableMessages(t *testing.T) {
 		&chainRouter,
 		tm,
 		defaultGossipConfig,
+		p2p.EngineType_ENGINE_TYPE_SNOWMAN,
 	)
 	require.NoError(t, err)
 
@@ -360,7 +377,9 @@ func TestReliableMessages(t *testing.T) {
 		nil,
 		nil,
 		1,
+		p2p.EngineType_ENGINE_TYPE_SNOWMAN,
 		resourceTracker,
+		validators.UnhandledSubnetConnector,
 	)
 	require.NoError(t, err)
 
@@ -402,7 +421,7 @@ func TestReliableMessages(t *testing.T) {
 
 	go func() {
 		for i := 0; i < queriesToSend; i++ {
-			vdrIDs := ids.NodeIDSet{}
+			vdrIDs := set.Set[ids.NodeID]{}
 			vdrIDs.Add(ids.NodeID{1})
 
 			sender.SendPullQuery(context.Background(), vdrIDs, uint32(i), ids.Empty)
@@ -418,7 +437,7 @@ func TestReliableMessages(t *testing.T) {
 func TestReliableMessagesToMyself(t *testing.T) {
 	benchlist := benchlist.NewNoBenchlist()
 	vdrs := validators.NewSet()
-	err := vdrs.AddWeight(ids.GenerateTestNodeID(), 1)
+	err := vdrs.Add(ids.GenerateTestNodeID(), nil, ids.Empty, 1)
 	require.NoError(t, err)
 	tm, err := timeout.NewManager(
 		&timer.AdaptiveTimeoutConfig{
@@ -452,8 +471,9 @@ func TestReliableMessagesToMyself(t *testing.T) {
 		logging.NoLog{},
 		tm,
 		time.Second,
-		ids.Set{},
-		ids.Set{},
+		set.Set[ids.ID]{},
+		true,
+		set.Set[ids.ID]{},
 		nil,
 		router.HealthConfig{},
 		"",
@@ -466,7 +486,7 @@ func TestReliableMessagesToMyself(t *testing.T) {
 	externalSender := &ExternalSenderTest{TB: t}
 	externalSender.Default(false)
 
-	sender, err := New(ctx, mc, externalSender, &chainRouter, tm, defaultGossipConfig)
+	sender, err := New(ctx, mc, externalSender, &chainRouter, tm, defaultGossipConfig, p2p.EngineType_ENGINE_TYPE_SNOWMAN)
 	require.NoError(t, err)
 
 	ctx2 := snow.DefaultConsensusContextTest()
@@ -483,7 +503,9 @@ func TestReliableMessagesToMyself(t *testing.T) {
 		nil,
 		nil,
 		time.Second,
+		p2p.EngineType_ENGINE_TYPE_SNOWMAN,
 		resourceTracker,
+		validators.UnhandledSubnetConnector,
 	)
 	require.NoError(t, err)
 
@@ -527,7 +549,7 @@ func TestReliableMessagesToMyself(t *testing.T) {
 			// Send a pull query to some random peer that won't respond
 			// because they don't exist. This will almost immediately trigger
 			// a query failed message
-			vdrIDs := ids.NodeIDSet{}
+			vdrIDs := set.Set[ids.NodeID]{}
 			vdrIDs.Add(ids.GenerateTestNodeID())
 			sender.SendPullQuery(context.Background(), vdrIDs, uint32(i), ids.Empty)
 		}
@@ -535,5 +557,752 @@ func TestReliableMessagesToMyself(t *testing.T) {
 
 	for _, await := range awaiting {
 		<-await
+	}
+}
+
+func TestSender_Bootstrap_Requests(t *testing.T) {
+	var (
+		chainID       = ids.GenerateTestID()
+		subnetID      = ids.GenerateTestID()
+		myNodeID      = ids.GenerateTestNodeID()
+		successNodeID = ids.GenerateTestNodeID()
+		failedNodeID  = ids.GenerateTestNodeID()
+		deadline      = time.Second
+		requestID     = uint32(1337)
+		ctx           = snow.DefaultContextTest()
+		heights       = []uint64{1, 2, 3}
+		containerIDs  = []ids.ID{ids.GenerateTestID(), ids.GenerateTestID()}
+		engineType    = p2p.EngineType_ENGINE_TYPE_SNOWMAN
+	)
+	ctx.ChainID = chainID
+	ctx.SubnetID = subnetID
+	ctx.NodeID = myNodeID
+	snowCtx := &snow.ConsensusContext{
+		Context:    ctx,
+		Registerer: prometheus.NewRegistry(),
+	}
+
+	type test struct {
+		name                    string
+		failedMsgF              func(nodeID ids.NodeID) message.InboundMessage
+		assertMsgToMyself       func(require *require.Assertions, msg message.InboundMessage)
+		expectedResponseOp      message.Op
+		setMsgCreatorExpect     func(msgCreator *message.MockOutboundMsgBuilder)
+		setExternalSenderExpect func(externalSender *MockExternalSender)
+		sendF                   func(require *require.Assertions, sender common.Sender, nodeIDs set.Set[ids.NodeID])
+	}
+
+	tests := []test{
+		{
+			name: "GetStateSummaryFrontier",
+			failedMsgF: func(nodeID ids.NodeID) message.InboundMessage {
+				return message.InternalGetStateSummaryFrontierFailed(
+					nodeID,
+					chainID,
+					requestID,
+				)
+			},
+			assertMsgToMyself: func(require *require.Assertions, msg message.InboundMessage) {
+				innerMsg, ok := msg.Message().(*p2p.GetStateSummaryFrontier)
+				require.True(ok)
+				require.Equal(chainID[:], innerMsg.ChainId)
+				require.Equal(requestID, innerMsg.RequestId)
+				require.Equal(uint64(deadline), innerMsg.Deadline)
+			},
+			expectedResponseOp: message.StateSummaryFrontierOp,
+			setMsgCreatorExpect: func(msgCreator *message.MockOutboundMsgBuilder) {
+				msgCreator.EXPECT().GetStateSummaryFrontier(
+					chainID,
+					requestID,
+					deadline,
+				).Return(nil, nil)
+			},
+			setExternalSenderExpect: func(externalSender *MockExternalSender) {
+				externalSender.EXPECT().Send(
+					gomock.Any(), // Outbound message
+					set.Set[ids.NodeID]{ // Note [myNodeID] is not in this set
+						successNodeID: struct{}{},
+						failedNodeID:  struct{}{},
+					}, // Node IDs
+					subnetID, // Subnet ID
+					snowCtx.IsValidatorOnly(),
+				).Return(set.Set[ids.NodeID]{
+					successNodeID: struct{}{},
+				})
+			},
+			sendF: func(_ *require.Assertions, sender common.Sender, nodeIDs set.Set[ids.NodeID]) {
+				sender.SendGetStateSummaryFrontier(
+					context.Background(),
+					nodeIDs,
+					requestID,
+				)
+			},
+		},
+		{
+			name: "GetAcceptedStateSummary",
+			failedMsgF: func(nodeID ids.NodeID) message.InboundMessage {
+				return message.InternalGetAcceptedStateSummaryFailed(
+					nodeID,
+					chainID,
+					requestID,
+				)
+			},
+			assertMsgToMyself: func(require *require.Assertions, msg message.InboundMessage) {
+				innerMsg, ok := msg.Message().(*p2p.GetAcceptedStateSummary)
+				require.True(ok)
+				require.Equal(chainID[:], innerMsg.ChainId)
+				require.Equal(requestID, innerMsg.RequestId)
+				require.Equal(uint64(deadline), innerMsg.Deadline)
+				require.Equal(heights, innerMsg.Heights)
+			},
+			expectedResponseOp: message.AcceptedStateSummaryOp,
+			setMsgCreatorExpect: func(msgCreator *message.MockOutboundMsgBuilder) {
+				msgCreator.EXPECT().GetAcceptedStateSummary(
+					chainID,
+					requestID,
+					deadline,
+					heights,
+				).Return(nil, nil)
+			},
+			setExternalSenderExpect: func(externalSender *MockExternalSender) {
+				externalSender.EXPECT().Send(
+					gomock.Any(), // Outbound message
+					set.Set[ids.NodeID]{ // Note [myNodeID] is not in this set
+						successNodeID: struct{}{},
+						failedNodeID:  struct{}{},
+					}, // Node IDs
+					subnetID, // Subnet ID
+					snowCtx.IsValidatorOnly(),
+				).Return(set.Set[ids.NodeID]{
+					successNodeID: struct{}{},
+				})
+			},
+			sendF: func(_ *require.Assertions, sender common.Sender, nodeIDs set.Set[ids.NodeID]) {
+				sender.SendGetAcceptedStateSummary(context.Background(), nodeIDs, requestID, heights)
+			},
+		},
+		{
+			name: "GetAcceptedFrontier",
+			failedMsgF: func(nodeID ids.NodeID) message.InboundMessage {
+				return message.InternalGetAcceptedFrontierFailed(
+					nodeID,
+					chainID,
+					requestID,
+					engineType,
+				)
+			},
+			assertMsgToMyself: func(require *require.Assertions, msg message.InboundMessage) {
+				innerMsg, ok := msg.Message().(*p2p.GetAcceptedFrontier)
+				require.True(ok)
+				require.Equal(chainID[:], innerMsg.ChainId)
+				require.Equal(requestID, innerMsg.RequestId)
+				require.Equal(uint64(deadline), innerMsg.Deadline)
+				require.Equal(engineType, innerMsg.EngineType)
+			},
+			expectedResponseOp: message.AcceptedFrontierOp,
+			setMsgCreatorExpect: func(msgCreator *message.MockOutboundMsgBuilder) {
+				msgCreator.EXPECT().GetAcceptedFrontier(
+					chainID,
+					requestID,
+					deadline,
+					engineType,
+				).Return(nil, nil)
+			},
+			setExternalSenderExpect: func(externalSender *MockExternalSender) {
+				externalSender.EXPECT().Send(
+					gomock.Any(), // Outbound message
+					set.Set[ids.NodeID]{ // Note [myNodeID] is not in this set
+						successNodeID: struct{}{},
+						failedNodeID:  struct{}{},
+					}, // Node IDs
+					subnetID, // Subnet ID
+					snowCtx.IsValidatorOnly(),
+				).Return(set.Set[ids.NodeID]{
+					successNodeID: struct{}{},
+				})
+			},
+			sendF: func(_ *require.Assertions, sender common.Sender, nodeIDs set.Set[ids.NodeID]) {
+				sender.SendGetAcceptedFrontier(context.Background(), nodeIDs, requestID)
+			},
+		},
+		{
+			name: "GetAccepted",
+			failedMsgF: func(nodeID ids.NodeID) message.InboundMessage {
+				return message.InternalGetAcceptedFailed(
+					nodeID,
+					chainID,
+					requestID,
+					engineType,
+				)
+			},
+			assertMsgToMyself: func(require *require.Assertions, msg message.InboundMessage) {
+				innerMsg, ok := msg.Message().(*p2p.GetAccepted)
+				require.True(ok)
+				require.Equal(chainID[:], innerMsg.ChainId)
+				require.Equal(requestID, innerMsg.RequestId)
+				require.Equal(uint64(deadline), innerMsg.Deadline)
+				require.Equal(engineType, innerMsg.EngineType)
+			},
+			expectedResponseOp: message.AcceptedOp,
+			setMsgCreatorExpect: func(msgCreator *message.MockOutboundMsgBuilder) {
+				msgCreator.EXPECT().GetAccepted(
+					chainID,
+					requestID,
+					deadline,
+					containerIDs,
+					engineType,
+				).Return(nil, nil)
+			},
+			setExternalSenderExpect: func(externalSender *MockExternalSender) {
+				externalSender.EXPECT().Send(
+					gomock.Any(), // Outbound message
+					set.Set[ids.NodeID]{ // Note [myNodeID] is not in this set
+						successNodeID: struct{}{},
+						failedNodeID:  struct{}{},
+					}, // Node IDs
+					subnetID, // Subnet ID
+					snowCtx.IsValidatorOnly(),
+				).Return(set.Set[ids.NodeID]{
+					successNodeID: struct{}{},
+				})
+			},
+			sendF: func(_ *require.Assertions, sender common.Sender, nodeIDs set.Set[ids.NodeID]) {
+				sender.SendGetAccepted(context.Background(), nodeIDs, requestID, containerIDs)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require := require.New(t)
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+
+			var (
+				msgCreator     = message.NewMockOutboundMsgBuilder(ctrl)
+				externalSender = NewMockExternalSender(ctrl)
+				timeoutManager = timeout.NewMockManager(ctrl)
+				router         = router.NewMockRouter(ctrl)
+				nodeIDs        = set.Set[ids.NodeID]{
+					successNodeID: struct{}{},
+					failedNodeID:  struct{}{},
+					myNodeID:      struct{}{},
+				}
+				nodeIDsCopy set.Set[ids.NodeID]
+			)
+			nodeIDsCopy.Union(nodeIDs)
+			snowCtx.Registerer = prometheus.NewRegistry()
+
+			sender, err := New(
+				snowCtx,
+				msgCreator,
+				externalSender,
+				router,
+				timeoutManager,
+				defaultGossipConfig,
+				engineType,
+			)
+			require.NoError(err)
+
+			// Set the timeout (deadline)
+			timeoutManager.EXPECT().TimeoutDuration().Return(deadline).AnyTimes()
+
+			// Make sure we register requests with the router
+			for nodeID := range nodeIDs {
+				expectedFailedMsg := tt.failedMsgF(nodeID)
+				router.EXPECT().RegisterRequest(
+					gomock.Any(),          // Context
+					nodeID,                // Node ID
+					chainID,               // Source Chain
+					chainID,               // Destination Chain
+					requestID,             // Request ID
+					tt.expectedResponseOp, // Operation
+					expectedFailedMsg,     // Failure Message
+				)
+			}
+
+			// Make sure we send a message to ourselves since [myNodeID]
+			// is in [nodeIDs].
+			// Note that HandleInbound is called in a separate goroutine
+			// so we need to use a channel to synchronize the test.
+			calledHandleInbound := make(chan struct{})
+			router.EXPECT().HandleInbound(gomock.Any(), gomock.Any()).Do(
+				func(_ context.Context, msg message.InboundMessage) {
+					// Make sure we're sending ourselves
+					// the expected message.
+					tt.assertMsgToMyself(require, msg)
+					close(calledHandleInbound)
+				},
+			)
+
+			// Make sure we're making the correct outbound message.
+			tt.setMsgCreatorExpect(msgCreator)
+
+			// Make sure we're sending the message
+			tt.setExternalSenderExpect(externalSender)
+
+			tt.sendF(require, sender, nodeIDsCopy)
+
+			<-calledHandleInbound
+		})
+	}
+}
+
+func TestSender_Bootstrap_Responses(t *testing.T) {
+	var (
+		chainID           = ids.GenerateTestID()
+		subnetID          = ids.GenerateTestID()
+		myNodeID          = ids.GenerateTestNodeID()
+		destinationNodeID = ids.GenerateTestNodeID()
+		deadline          = time.Second
+		requestID         = uint32(1337)
+		ctx               = snow.DefaultContextTest()
+		summaryIDs        = []ids.ID{ids.GenerateTestID(), ids.GenerateTestID()}
+		summary           = []byte{1, 2, 3}
+		engineType        = p2p.EngineType_ENGINE_TYPE_AVALANCHE
+	)
+	ctx.ChainID = chainID
+	ctx.SubnetID = subnetID
+	ctx.NodeID = myNodeID
+	snowCtx := &snow.ConsensusContext{
+		Context:    ctx,
+		Registerer: prometheus.NewRegistry(),
+	}
+
+	type test struct {
+		name                    string
+		assertMsgToMyself       func(require *require.Assertions, msg message.InboundMessage)
+		setMsgCreatorExpect     func(msgCreator *message.MockOutboundMsgBuilder)
+		setExternalSenderExpect func(externalSender *MockExternalSender)
+		sendF                   func(require *require.Assertions, sender common.Sender, nodeID ids.NodeID)
+	}
+
+	tests := []test{
+		{
+			name: "StateSummaryFrontier",
+			setMsgCreatorExpect: func(msgCreator *message.MockOutboundMsgBuilder) {
+				msgCreator.EXPECT().StateSummaryFrontier(
+					chainID,
+					requestID,
+					summary,
+				).Return(nil, nil) // Don't care about the message
+			},
+			assertMsgToMyself: func(require *require.Assertions, msg message.InboundMessage) {
+				innerMsg, ok := msg.Message().(*p2p.StateSummaryFrontier)
+				require.True(ok)
+				require.Equal(chainID[:], innerMsg.ChainId)
+				require.Equal(requestID, innerMsg.RequestId)
+				require.Equal(summary, innerMsg.Summary)
+			},
+			setExternalSenderExpect: func(externalSender *MockExternalSender) {
+				externalSender.EXPECT().Send(
+					gomock.Any(), // Outbound message
+					set.Set[ids.NodeID]{destinationNodeID: struct{}{}}, // Node IDs
+					subnetID, // Subnet ID
+					snowCtx.IsValidatorOnly(),
+				).Return(nil)
+			},
+			sendF: func(_ *require.Assertions, sender common.Sender, nodeID ids.NodeID) {
+				sender.SendStateSummaryFrontier(context.Background(), nodeID, requestID, summary)
+			},
+		},
+		{
+			name: "AcceptedStateSummary",
+			setMsgCreatorExpect: func(msgCreator *message.MockOutboundMsgBuilder) {
+				msgCreator.EXPECT().AcceptedStateSummary(
+					chainID,
+					requestID,
+					summaryIDs,
+				).Return(nil, nil) // Don't care about the message
+			},
+			assertMsgToMyself: func(require *require.Assertions, msg message.InboundMessage) {
+				innerMsg, ok := msg.Message().(*p2p.AcceptedStateSummary)
+				require.True(ok)
+				require.Equal(chainID[:], innerMsg.ChainId)
+				require.Equal(requestID, innerMsg.RequestId)
+				for i, summaryID := range summaryIDs {
+					require.Equal(summaryID[:], innerMsg.SummaryIds[i])
+				}
+			},
+			setExternalSenderExpect: func(externalSender *MockExternalSender) {
+				externalSender.EXPECT().Send(
+					gomock.Any(), // Outbound message
+					set.Set[ids.NodeID]{destinationNodeID: struct{}{}}, // Node IDs
+					subnetID, // Subnet ID
+					snowCtx.IsValidatorOnly(),
+				).Return(nil)
+			},
+			sendF: func(_ *require.Assertions, sender common.Sender, nodeID ids.NodeID) {
+				sender.SendAcceptedStateSummary(context.Background(), nodeID, requestID, summaryIDs)
+			},
+		},
+		{
+			name: "AcceptedFrontier",
+			setMsgCreatorExpect: func(msgCreator *message.MockOutboundMsgBuilder) {
+				msgCreator.EXPECT().AcceptedFrontier(
+					chainID,
+					requestID,
+					summaryIDs,
+					engineType,
+				).Return(nil, nil) // Don't care about the message
+			},
+			assertMsgToMyself: func(require *require.Assertions, msg message.InboundMessage) {
+				innerMsg, ok := msg.Message().(*p2p.AcceptedFrontier)
+				require.True(ok)
+				require.Equal(chainID[:], innerMsg.ChainId)
+				require.Equal(requestID, innerMsg.RequestId)
+				for i, summaryID := range summaryIDs {
+					require.Equal(summaryID[:], innerMsg.ContainerIds[i])
+				}
+				require.Equal(engineType, innerMsg.EngineType)
+			},
+			setExternalSenderExpect: func(externalSender *MockExternalSender) {
+				externalSender.EXPECT().Send(
+					gomock.Any(), // Outbound message
+					set.Set[ids.NodeID]{destinationNodeID: struct{}{}}, // Node IDs
+					subnetID, // Subnet ID
+					snowCtx.IsValidatorOnly(),
+				).Return(nil)
+			},
+			sendF: func(_ *require.Assertions, sender common.Sender, nodeID ids.NodeID) {
+				sender.SendAcceptedFrontier(context.Background(), nodeID, requestID, summaryIDs)
+			},
+		},
+		{
+			name: "Accepted",
+			setMsgCreatorExpect: func(msgCreator *message.MockOutboundMsgBuilder) {
+				msgCreator.EXPECT().Accepted(
+					chainID,
+					requestID,
+					summaryIDs,
+					engineType,
+				).Return(nil, nil) // Don't care about the message
+			},
+			assertMsgToMyself: func(require *require.Assertions, msg message.InboundMessage) {
+				innerMsg, ok := msg.Message().(*p2p.Accepted)
+				require.True(ok)
+				require.Equal(chainID[:], innerMsg.ChainId)
+				require.Equal(requestID, innerMsg.RequestId)
+				for i, summaryID := range summaryIDs {
+					require.Equal(summaryID[:], innerMsg.ContainerIds[i])
+				}
+				require.Equal(engineType, innerMsg.EngineType)
+			},
+			setExternalSenderExpect: func(externalSender *MockExternalSender) {
+				externalSender.EXPECT().Send(
+					gomock.Any(), // Outbound message
+					set.Set[ids.NodeID]{destinationNodeID: struct{}{}}, // Node IDs
+					subnetID, // Subnet ID
+					snowCtx.IsValidatorOnly(),
+				).Return(nil)
+			},
+			sendF: func(_ *require.Assertions, sender common.Sender, nodeID ids.NodeID) {
+				sender.SendAccepted(context.Background(), nodeID, requestID, summaryIDs)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require := require.New(t)
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+
+			var (
+				msgCreator     = message.NewMockOutboundMsgBuilder(ctrl)
+				externalSender = NewMockExternalSender(ctrl)
+				timeoutManager = timeout.NewMockManager(ctrl)
+				router         = router.NewMockRouter(ctrl)
+			)
+			snowCtx.Registerer = prometheus.NewRegistry()
+
+			sender, err := New(
+				snowCtx,
+				msgCreator,
+				externalSender,
+				router,
+				timeoutManager,
+				defaultGossipConfig,
+				engineType,
+			)
+			require.NoError(err)
+
+			// Set the timeout (deadline)
+			timeoutManager.EXPECT().TimeoutDuration().Return(deadline).AnyTimes()
+
+			// Case: sending to ourselves
+			{
+				calledHandleInbound := make(chan struct{})
+				router.EXPECT().HandleInbound(gomock.Any(), gomock.Any()).Do(
+					func(_ context.Context, msg message.InboundMessage) {
+						// Make sure we're sending ourselves
+						// the expected message.
+						tt.assertMsgToMyself(require, msg)
+						close(calledHandleInbound)
+					},
+				)
+				tt.sendF(require, sender, myNodeID)
+				<-calledHandleInbound
+			}
+
+			// Case: not sending to ourselves
+
+			// Make sure we're making the correct outbound message.
+			tt.setMsgCreatorExpect(msgCreator)
+
+			// Make sure we're sending the message
+			tt.setExternalSenderExpect(externalSender)
+
+			tt.sendF(require, sender, destinationNodeID)
+		})
+	}
+}
+
+func TestSender_Single_Request(t *testing.T) {
+	var (
+		chainID           = ids.GenerateTestID()
+		subnetID          = ids.GenerateTestID()
+		myNodeID          = ids.GenerateTestNodeID()
+		destinationNodeID = ids.GenerateTestNodeID()
+		deadline          = time.Second
+		requestID         = uint32(1337)
+		ctx               = snow.DefaultContextTest()
+		containerID       = ids.GenerateTestID()
+		engineType        = p2p.EngineType_ENGINE_TYPE_SNOWMAN
+	)
+	ctx.ChainID = chainID
+	ctx.SubnetID = subnetID
+	ctx.NodeID = myNodeID
+	snowCtx := &snow.ConsensusContext{
+		Context:    ctx,
+		Registerer: prometheus.NewRegistry(),
+	}
+
+	type test struct {
+		name                    string
+		failedMsgF              func(nodeID ids.NodeID) message.InboundMessage
+		assertMsgToMyself       func(require *require.Assertions, msg message.InboundMessage)
+		expectedResponseOp      message.Op
+		setMsgCreatorExpect     func(msgCreator *message.MockOutboundMsgBuilder)
+		setExternalSenderExpect func(externalSender *MockExternalSender, sentTo set.Set[ids.NodeID])
+		sendF                   func(require *require.Assertions, sender common.Sender, nodeID ids.NodeID)
+	}
+
+	tests := []test{
+		{
+			name: "GetAncestors",
+			failedMsgF: func(nodeID ids.NodeID) message.InboundMessage {
+				return message.InternalGetAncestorsFailed(
+					nodeID,
+					chainID,
+					requestID,
+					engineType,
+				)
+			},
+			assertMsgToMyself: func(require *require.Assertions, msg message.InboundMessage) {
+				innerMsg, ok := msg.Message().(*message.GetAncestorsFailed)
+				require.True(ok)
+				require.Equal(chainID, innerMsg.ChainID)
+				require.Equal(requestID, innerMsg.RequestID)
+				require.Equal(engineType, innerMsg.EngineType)
+			},
+			expectedResponseOp: message.AncestorsOp,
+			setMsgCreatorExpect: func(msgCreator *message.MockOutboundMsgBuilder) {
+				msgCreator.EXPECT().GetAncestors(
+					chainID,
+					requestID,
+					deadline,
+					containerID,
+					engineType,
+				).Return(nil, nil)
+			},
+			setExternalSenderExpect: func(externalSender *MockExternalSender, sentTo set.Set[ids.NodeID]) {
+				externalSender.EXPECT().Send(
+					gomock.Any(), // Outbound message
+					set.Set[ids.NodeID]{destinationNodeID: struct{}{}}, // Node IDs
+					subnetID,
+					snowCtx.IsValidatorOnly(),
+				).Return(sentTo)
+			},
+			sendF: func(_ *require.Assertions, sender common.Sender, nodeID ids.NodeID) {
+				sender.SendGetAncestors(context.Background(), nodeID, requestID, containerID)
+			},
+		},
+		{
+			name: "Get",
+			failedMsgF: func(nodeID ids.NodeID) message.InboundMessage {
+				return message.InternalGetFailed(
+					nodeID,
+					chainID,
+					requestID,
+					engineType,
+				)
+			},
+			assertMsgToMyself: func(require *require.Assertions, msg message.InboundMessage) {
+				innerMsg, ok := msg.Message().(*message.GetFailed)
+				require.True(ok)
+				require.Equal(chainID, innerMsg.ChainID)
+				require.Equal(requestID, innerMsg.RequestID)
+				require.Equal(engineType, innerMsg.EngineType)
+			},
+			expectedResponseOp: message.PutOp,
+			setMsgCreatorExpect: func(msgCreator *message.MockOutboundMsgBuilder) {
+				msgCreator.EXPECT().Get(
+					chainID,
+					requestID,
+					deadline,
+					containerID,
+					engineType,
+				).Return(nil, nil)
+			},
+			setExternalSenderExpect: func(externalSender *MockExternalSender, sentTo set.Set[ids.NodeID]) {
+				externalSender.EXPECT().Send(
+					gomock.Any(), // Outbound message
+					set.Set[ids.NodeID]{destinationNodeID: struct{}{}}, // Node IDs
+					subnetID,
+					snowCtx.IsValidatorOnly(),
+				).Return(sentTo)
+			},
+			sendF: func(_ *require.Assertions, sender common.Sender, nodeID ids.NodeID) {
+				sender.SendGet(context.Background(), nodeID, requestID, containerID)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require := require.New(t)
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+
+			var (
+				msgCreator     = message.NewMockOutboundMsgBuilder(ctrl)
+				externalSender = NewMockExternalSender(ctrl)
+				timeoutManager = timeout.NewMockManager(ctrl)
+				router         = router.NewMockRouter(ctrl)
+			)
+			snowCtx.Registerer = prometheus.NewRegistry()
+
+			sender, err := New(
+				snowCtx,
+				msgCreator,
+				externalSender,
+				router,
+				timeoutManager,
+				defaultGossipConfig,
+				engineType,
+			)
+			require.NoError(err)
+
+			// Set the timeout (deadline)
+			timeoutManager.EXPECT().TimeoutDuration().Return(deadline).AnyTimes()
+
+			// Case: sending to myself
+			{
+				// Make sure we register requests with the router
+				expectedFailedMsg := tt.failedMsgF(myNodeID)
+				router.EXPECT().RegisterRequest(
+					gomock.Any(),          // Context
+					myNodeID,              // Node ID
+					chainID,               // Source Chain
+					chainID,               // Destination Chain
+					requestID,             // Request ID
+					tt.expectedResponseOp, // Operation
+					expectedFailedMsg,     // Failure Message
+				)
+
+				// Note that HandleInbound is called in a separate goroutine
+				// so we need to use a channel to synchronize the test.
+				calledHandleInbound := make(chan struct{})
+				router.EXPECT().HandleInbound(gomock.Any(), gomock.Any()).Do(
+					func(_ context.Context, msg message.InboundMessage) {
+						// Make sure we're sending ourselves
+						// the expected message.
+						tt.assertMsgToMyself(require, msg)
+						close(calledHandleInbound)
+					},
+				)
+
+				tt.sendF(require, sender, myNodeID)
+
+				<-calledHandleInbound
+			}
+
+			// Case: Node is benched
+			{
+				timeoutManager.EXPECT().IsBenched(destinationNodeID, chainID).Return(true)
+
+				timeoutManager.EXPECT().RegisterRequestToUnreachableValidator()
+
+				// Make sure we register requests with the router
+				expectedFailedMsg := tt.failedMsgF(destinationNodeID)
+				router.EXPECT().RegisterRequest(
+					gomock.Any(),          // Context
+					destinationNodeID,     // Node ID
+					chainID,               // Source Chain
+					chainID,               // Destination Chain
+					requestID,             // Request ID
+					tt.expectedResponseOp, // Operation
+					expectedFailedMsg,     // Failure Message
+				)
+
+				// Note that HandleInbound is called in a separate goroutine
+				// so we need to use a channel to synchronize the test.
+				calledHandleInbound := make(chan struct{})
+				router.EXPECT().HandleInbound(gomock.Any(), gomock.Any()).Do(
+					func(_ context.Context, msg message.InboundMessage) {
+						// Make sure we're sending ourselves
+						// the expected message.
+						tt.assertMsgToMyself(require, msg)
+						close(calledHandleInbound)
+					},
+				)
+
+				tt.sendF(require, sender, destinationNodeID)
+
+				<-calledHandleInbound
+			}
+
+			// Case: Node is not myself, not benched and send fails
+			{
+				timeoutManager.EXPECT().IsBenched(destinationNodeID, chainID).Return(false)
+
+				timeoutManager.EXPECT().RegisterRequestToUnreachableValidator()
+
+				// Make sure we register requests with the router
+				expectedFailedMsg := tt.failedMsgF(destinationNodeID)
+				router.EXPECT().RegisterRequest(
+					gomock.Any(),          // Context
+					destinationNodeID,     // Node ID
+					chainID,               // Source Chain
+					chainID,               // Destination Chain
+					requestID,             // Request ID
+					tt.expectedResponseOp, // Operation
+					expectedFailedMsg,     // Failure Message
+				)
+
+				// Note that HandleInbound is called in a separate goroutine
+				// so we need to use a channel to synchronize the test.
+				calledHandleInbound := make(chan struct{})
+				router.EXPECT().HandleInbound(gomock.Any(), gomock.Any()).Do(
+					func(_ context.Context, msg message.InboundMessage) {
+						// Make sure we're sending ourselves
+						// the expected message.
+						tt.assertMsgToMyself(require, msg)
+						close(calledHandleInbound)
+					},
+				)
+
+				// Make sure we're making the correct outbound message.
+				tt.setMsgCreatorExpect(msgCreator)
+
+				// Make sure we're sending the message
+				tt.setExternalSenderExpect(externalSender, set.Set[ids.NodeID]{})
+
+				tt.sendF(require, sender, destinationNodeID)
+
+				<-calledHandleInbound
+			}
+		})
 	}
 }

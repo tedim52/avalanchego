@@ -17,8 +17,10 @@ import (
 	"github.com/ava-labs/avalanchego/snow/consensus/snowstorm"
 	"github.com/ava-labs/avalanchego/snow/engine/avalanche/vertex"
 	"github.com/ava-labs/avalanchego/snow/engine/common"
+	"github.com/ava-labs/avalanchego/snow/engine/common/tracker"
 	"github.com/ava-labs/avalanchego/snow/events"
 	"github.com/ava-labs/avalanchego/utils/sampler"
+	"github.com/ava-labs/avalanchego/utils/set"
 	"github.com/ava-labs/avalanchego/utils/wrappers"
 	"github.com/ava-labs/avalanchego/version"
 )
@@ -44,17 +46,20 @@ type Transitive struct {
 
 	RequestID uint32
 
+	// acceptedFrontiers of the other validators of this chain
+	acceptedFrontiers tracker.Accepted
+
 	polls poll.Set // track people I have asked for their preference
 
 	// The set of vertices that have been requested in Get messages but not yet received
 	outstandingVtxReqs common.Requests
 
 	// missingTxs tracks transaction that are missing
-	missingTxs ids.Set
+	missingTxs set.Set[ids.ID]
 
 	// IDs of vertices that are queued to be added to consensus but haven't yet been
 	// because of missing dependencies
-	pending ids.Set
+	pending set.Set[ids.ID]
 
 	// vtxBlocked tracks operations that are blocked on vertices
 	// txBlocked tracks operations that are blocked on transactions
@@ -74,6 +79,9 @@ type Transitive struct {
 func newTransitive(config Config) (*Transitive, error) {
 	config.Ctx.Log.Info("initializing consensus engine")
 
+	acceptedFrontiers := tracker.NewAccepted()
+	config.Validators.RegisterCallbackListener(acceptedFrontiers)
+
 	factory := poll.NewEarlyTermNoTraversalFactory(config.Params.Alpha)
 
 	t := &Transitive{
@@ -83,6 +91,7 @@ func newTransitive(config Config) (*Transitive, error) {
 		AcceptedFrontierHandler:     common.NewNoOpAcceptedFrontierHandler(config.Ctx.Log),
 		AcceptedHandler:             common.NewNoOpAcceptedHandler(config.Ctx.Log),
 		AncestorsHandler:            common.NewNoOpAncestorsHandler(config.Ctx.Log),
+		acceptedFrontiers:           acceptedFrontiers,
 		polls: poll.NewSet(factory,
 			config.Ctx.Log,
 			"",
@@ -170,7 +179,7 @@ func (t *Transitive) GetFailed(ctx context.Context, nodeID ids.NodeID, requestID
 
 func (t *Transitive) PullQuery(ctx context.Context, nodeID ids.NodeID, requestID uint32, vtxID ids.ID) error {
 	// Immediately respond to the query with the current consensus preferences.
-	t.Sender.SendChits(ctx, nodeID, requestID, t.Consensus.Preferences().List())
+	t.Sender.SendChits(ctx, nodeID, requestID, t.Consensus.Preferences().List(), t.Manager.Edge(ctx))
 
 	// If we have [vtxID], attempt to put it into consensus, if we haven't
 	// already. If we don't not have [vtxID], fetch it from [nodeID].
@@ -183,7 +192,7 @@ func (t *Transitive) PullQuery(ctx context.Context, nodeID ids.NodeID, requestID
 
 func (t *Transitive) PushQuery(ctx context.Context, nodeID ids.NodeID, requestID uint32, vtxBytes []byte) error {
 	// Immediately respond to the query with the current consensus preferences.
-	t.Sender.SendChits(ctx, nodeID, requestID, t.Consensus.Preferences().List())
+	t.Sender.SendChits(ctx, nodeID, requestID, t.Consensus.Preferences().List(), t.Manager.Edge(ctx))
 
 	vtx, err := t.Manager.ParseVtx(ctx, vtxBytes)
 	if err != nil {
@@ -212,7 +221,9 @@ func (t *Transitive) PushQuery(ctx context.Context, nodeID ids.NodeID, requestID
 	return t.attemptToIssueTxs(ctx)
 }
 
-func (t *Transitive) Chits(ctx context.Context, nodeID ids.NodeID, requestID uint32, votes []ids.ID) error {
+func (t *Transitive) Chits(ctx context.Context, nodeID ids.NodeID, requestID uint32, votes []ids.ID, accepted []ids.ID) error {
+	t.acceptedFrontiers.SetAcceptedFrontier(nodeID, accepted)
+
 	v := &voter{
 		t:         t,
 		vdr:       nodeID,
@@ -233,7 +244,8 @@ func (t *Transitive) Chits(ctx context.Context, nodeID ids.NodeID, requestID uin
 }
 
 func (t *Transitive) QueryFailed(ctx context.Context, nodeID ids.NodeID, requestID uint32) error {
-	return t.Chits(ctx, nodeID, requestID, nil)
+	lastAccepted := t.acceptedFrontiers.AcceptedFrontier(nodeID)
+	return t.Chits(ctx, nodeID, requestID, lastAccepted, lastAccepted)
 }
 
 func (t *Transitive) CrossChainAppRequest(ctx context.Context, chainID ids.ID, requestID uint32, deadline time.Time, request []byte) error {
@@ -509,7 +521,7 @@ func (t *Transitive) issue(ctx context.Context, vtx avalanche.Vertex) error {
 	if err != nil {
 		return err
 	}
-	txIDs := ids.NewSet(len(txs))
+	txIDs := set.NewSet[ids.ID](len(txs))
 	for _, tx := range txs {
 		txIDs.Add(tx.ID())
 	}
@@ -573,14 +585,14 @@ func (t *Transitive) batch(ctx context.Context, txs []snowstorm.Tx, opt batchOpt
 	if opt.limit && t.Params.OptimalProcessing <= t.Consensus.NumProcessing() {
 		return txs, nil
 	}
-	issuedTxs := ids.Set{}
-	consumed := ids.Set{}
+	issuedTxs := set.Set[ids.ID]{}
+	consumed := set.Set[ids.ID]{}
 	orphans := t.Consensus.Orphans()
 	start := 0
 	end := 0
 	for end < len(txs) {
 		tx := txs[end]
-		inputs := ids.Set{}
+		inputs := set.Set[ids.ID]{}
 		inputs.Add(tx.InputIDs()...)
 		overlaps := consumed.Overlaps(inputs)
 		if end-start >= t.Params.BatchSize || (opt.force && overlaps) {
@@ -625,7 +637,7 @@ func (t *Transitive) issueRepoll(ctx context.Context) {
 	}
 
 	vtxID := preferredIDs.CappedList(1)[0]
-	vdrs, err := t.Validators.Sample(t.Params.K) // Validators to sample
+	vdrIDs, err := t.Validators.Sample(t.Params.K) // Validators to sample
 	if err != nil {
 		t.Ctx.Log.Error("dropped re-query",
 			zap.String("reason", "insufficient number of validators"),
@@ -636,12 +648,10 @@ func (t *Transitive) issueRepoll(ctx context.Context) {
 	}
 
 	vdrBag := ids.NodeIDBag{} // IDs of validators to be sampled
-	for _, vdr := range vdrs {
-		vdrBag.Add(vdr.ID())
-	}
+	vdrBag.Add(vdrIDs...)
 
 	vdrList := vdrBag.List()
-	vdrSet := ids.NewNodeIDSet(len(vdrList))
+	vdrSet := set.NewSet[ids.NodeID](len(vdrList))
 	vdrSet.Add(vdrList...)
 
 	// Poll the network

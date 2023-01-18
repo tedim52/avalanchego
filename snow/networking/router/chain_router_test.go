@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/golang/mock/gomock"
+
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/stretchr/testify/require"
@@ -16,6 +18,7 @@ import (
 	"github.com/ava-labs/avalanchego/api/metrics"
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/message"
+	"github.com/ava-labs/avalanchego/proto/pb/p2p"
 	"github.com/ava-labs/avalanchego/snow"
 	"github.com/ava-labs/avalanchego/snow/engine/common"
 	"github.com/ava-labs/avalanchego/snow/networking/benchlist"
@@ -23,16 +26,20 @@ import (
 	"github.com/ava-labs/avalanchego/snow/networking/timeout"
 	"github.com/ava-labs/avalanchego/snow/networking/tracker"
 	"github.com/ava-labs/avalanchego/snow/validators"
+	"github.com/ava-labs/avalanchego/utils/constants"
 	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/avalanchego/utils/math/meter"
 	"github.com/ava-labs/avalanchego/utils/resource"
+	"github.com/ava-labs/avalanchego/utils/set"
 	"github.com/ava-labs/avalanchego/utils/timer"
 	"github.com/ava-labs/avalanchego/version"
 )
 
+const engineType = p2p.EngineType_ENGINE_TYPE_AVALANCHE
+
 func TestShutdown(t *testing.T) {
 	vdrs := validators.NewSet()
-	err := vdrs.AddWeight(ids.GenerateTestNodeID(), 1)
+	err := vdrs.Add(ids.GenerateTestNodeID(), nil, ids.Empty, 1)
 	require.NoError(t, err)
 	benchlist := benchlist.NewNoBenchlist()
 	tm, err := timeout.NewManager(
@@ -56,8 +63,9 @@ func TestShutdown(t *testing.T) {
 		logging.NoLog{},
 		tm,
 		time.Second,
-		ids.Set{},
-		ids.Set{},
+		set.Set[ids.ID]{},
+		true,
+		set.Set[ids.ID]{},
 		nil,
 		HealthConfig{},
 		"",
@@ -81,7 +89,9 @@ func TestShutdown(t *testing.T) {
 		nil,
 		nil,
 		time.Second,
+		engineType,
 		resourceTracker,
+		validators.UnhandledSubnetConnector,
 	)
 	require.NoError(t, err)
 
@@ -151,7 +161,7 @@ func TestShutdown(t *testing.T) {
 func TestShutdownTimesOut(t *testing.T) {
 	nodeID := ids.EmptyNodeID
 	vdrs := validators.NewSet()
-	err := vdrs.AddWeight(ids.GenerateTestNodeID(), 1)
+	err := vdrs.Add(ids.GenerateTestNodeID(), nil, ids.Empty, 1)
 	require.NoError(t, err)
 	benchlist := benchlist.NewNoBenchlist()
 	metrics := prometheus.NewRegistry()
@@ -178,8 +188,9 @@ func TestShutdownTimesOut(t *testing.T) {
 		logging.NoLog{},
 		tm,
 		time.Millisecond,
-		ids.Set{},
-		ids.Set{},
+		set.Set[ids.ID]{},
+		true,
+		set.Set[ids.ID]{},
 		nil,
 		HealthConfig{},
 		"",
@@ -201,7 +212,9 @@ func TestShutdownTimesOut(t *testing.T) {
 		nil,
 		nil,
 		time.Second,
+		engineType,
 		resourceTracker,
+		validators.UnhandledSubnetConnector,
 	)
 	require.NoError(t, err)
 
@@ -255,7 +268,7 @@ func TestShutdownTimesOut(t *testing.T) {
 
 	go func() {
 		chainID := ids.ID{}
-		msg := message.InboundPullQuery(chainID, 1, time.Hour, ids.GenerateTestID(), nodeID)
+		msg := message.InboundPullQuery(chainID, 1, time.Hour, ids.GenerateTestID(), nodeID, engineType)
 		handler.Push(context.Background(), msg)
 
 		time.Sleep(50 * time.Millisecond) // Pause to ensure message gets processed
@@ -273,7 +286,7 @@ func TestShutdownTimesOut(t *testing.T) {
 
 // Ensure that a timeout fires if we don't get a response to a request
 func TestRouterTimeout(t *testing.T) {
-	r := require.New(t)
+	require := require.New(t)
 	// Create a timeout manager
 	maxTimeout := 25 * time.Millisecond
 	tm, err := timeout.NewManager(
@@ -288,7 +301,7 @@ func TestRouterTimeout(t *testing.T) {
 		"",
 		prometheus.NewRegistry(),
 	)
-	r.NoError(err)
+	require.NoError(err)
 	go tm.Dispatch()
 
 	// Create a router
@@ -299,14 +312,15 @@ func TestRouterTimeout(t *testing.T) {
 		logging.NoLog{},
 		tm,
 		time.Millisecond,
-		ids.Set{},
-		ids.Set{},
+		set.Set[ids.ID]{},
+		true,
+		set.Set[ids.ID]{},
 		nil,
 		HealthConfig{},
 		"",
 		prometheus.NewRegistry(),
 	)
-	r.NoError(err)
+	require.NoError(err)
 
 	// Create bootstrapper, engine and handler
 	var (
@@ -322,8 +336,8 @@ func TestRouterTimeout(t *testing.T) {
 
 	ctx := snow.DefaultConsensusContextTest()
 	vdrs := validators.NewSet()
-	err = vdrs.AddWeight(ids.GenerateTestNodeID(), 1)
-	r.NoError(err)
+	err = vdrs.Add(ids.GenerateTestNodeID(), nil, ids.Empty, 1)
+	require.NoError(err)
 
 	resourceTracker, err := tracker.NewResourceTracker(
 		prometheus.NewRegistry(),
@@ -331,7 +345,7 @@ func TestRouterTimeout(t *testing.T) {
 		meter.ContinuousFactory{},
 		time.Second,
 	)
-	r.NoError(err)
+	require.NoError(err)
 
 	handler, err := handler.New(
 		ctx,
@@ -339,9 +353,11 @@ func TestRouterTimeout(t *testing.T) {
 		nil,
 		nil,
 		time.Second,
+		engineType,
 		resourceTracker,
+		validators.UnhandledSubnetConnector,
 	)
-	r.NoError(err)
+	require.NoError(err)
 
 	bootstrapper := &common.BootstrapperTest{
 		BootstrapableTest: common.BootstrapableTest{
@@ -467,6 +483,7 @@ func TestRouterTimeout(t *testing.T) {
 				nodeID,
 				ctx.ChainID,
 				requestID,
+				engineType,
 			),
 		)
 	}
@@ -485,6 +502,7 @@ func TestRouterTimeout(t *testing.T) {
 				nodeID,
 				ctx.ChainID,
 				requestID,
+				engineType,
 			),
 		)
 	}
@@ -503,6 +521,7 @@ func TestRouterTimeout(t *testing.T) {
 				nodeID,
 				ctx.ChainID,
 				requestID,
+				engineType,
 			),
 		)
 	}
@@ -521,6 +540,7 @@ func TestRouterTimeout(t *testing.T) {
 				nodeID,
 				ctx.ChainID,
 				requestID,
+				engineType,
 			),
 		)
 	}
@@ -539,6 +559,7 @@ func TestRouterTimeout(t *testing.T) {
 				nodeID,
 				ctx.ChainID,
 				requestID,
+				engineType,
 			),
 		)
 	}
@@ -585,15 +606,15 @@ func TestRouterTimeout(t *testing.T) {
 	chainRouter.lock.Lock()
 	defer chainRouter.lock.Unlock()
 
-	r.True(calledGetStateSummaryFrontierFailed)
-	r.True(calledGetAcceptedStateSummaryFailed)
-	r.True(calledGetAcceptedFrontierFailed)
-	r.True(calledGetAcceptedFailed)
-	r.True(calledGetAncestorsFailed)
-	r.True(calledGetFailed)
-	r.True(calledQueryFailed)
-	r.True(calledAppRequestFailed)
-	r.True(calledCrossChainAppRequestFailed)
+	require.True(calledGetStateSummaryFrontierFailed)
+	require.True(calledGetAcceptedStateSummaryFailed)
+	require.True(calledGetAcceptedFrontierFailed)
+	require.True(calledGetAcceptedFailed)
+	require.True(calledGetAncestorsFailed)
+	require.True(calledGetFailed)
+	require.True(calledQueryFailed)
+	require.True(calledAppRequestFailed)
+	require.True(calledCrossChainAppRequestFailed)
 }
 
 func TestRouterClearTimeouts(t *testing.T) {
@@ -620,8 +641,9 @@ func TestRouterClearTimeouts(t *testing.T) {
 		logging.NoLog{},
 		tm,
 		time.Millisecond,
-		ids.Set{},
-		ids.Set{},
+		set.Set[ids.ID]{},
+		true,
+		set.Set[ids.ID]{},
 		nil,
 		HealthConfig{},
 		"",
@@ -632,7 +654,7 @@ func TestRouterClearTimeouts(t *testing.T) {
 	// Create bootstrapper, engine and handler
 	ctx := snow.DefaultConsensusContextTest()
 	vdrs := validators.NewSet()
-	err = vdrs.AddWeight(ids.GenerateTestNodeID(), 1)
+	err = vdrs.Add(ids.GenerateTestNodeID(), nil, ids.Empty, 1)
 	require.NoError(t, err)
 
 	resourceTracker, err := tracker.NewResourceTracker(
@@ -648,7 +670,9 @@ func TestRouterClearTimeouts(t *testing.T) {
 		nil,
 		nil,
 		time.Second,
+		engineType,
 		resourceTracker,
+		validators.UnhandledSubnetConnector,
 	)
 	require.NoError(t, err)
 
@@ -743,6 +767,7 @@ func TestRouterClearTimeouts(t *testing.T) {
 				nodeID,
 				ctx.ChainID,
 				requestID,
+				engineType,
 			),
 		)
 		msg := message.InboundAcceptedFrontier(
@@ -750,6 +775,7 @@ func TestRouterClearTimeouts(t *testing.T) {
 			requestID,
 			nil,
 			nodeID,
+			engineType,
 		)
 		chainRouter.HandleInbound(context.Background(), msg)
 	}
@@ -767,6 +793,7 @@ func TestRouterClearTimeouts(t *testing.T) {
 				nodeID,
 				ctx.ChainID,
 				requestID,
+				engineType,
 			),
 		)
 		msg := message.InboundAccepted(
@@ -774,6 +801,7 @@ func TestRouterClearTimeouts(t *testing.T) {
 			requestID,
 			nil,
 			nodeID,
+			engineType,
 		)
 		chainRouter.HandleInbound(context.Background(), msg)
 	}
@@ -791,13 +819,16 @@ func TestRouterClearTimeouts(t *testing.T) {
 				nodeID,
 				ctx.ChainID,
 				requestID,
+				engineType,
 			),
 		)
 		msg := message.InboundChits(
 			ctx.ChainID,
 			requestID,
 			nil,
+			nil,
 			nodeID,
+			engineType,
 		)
 		chainRouter.HandleInbound(context.Background(), msg)
 	}
@@ -880,8 +911,9 @@ func TestValidatorOnlyMessageDrops(t *testing.T) {
 		logging.NoLog{},
 		tm,
 		time.Millisecond,
-		ids.Set{},
-		ids.Set{},
+		set.Set[ids.ID]{},
+		true,
+		set.Set[ids.ID]{},
 		nil,
 		HealthConfig{},
 		"",
@@ -897,7 +929,7 @@ func TestValidatorOnlyMessageDrops(t *testing.T) {
 	ctx.SetValidatorOnly()
 	vdrs := validators.NewSet()
 	vID := ids.GenerateTestNodeID()
-	err = vdrs.AddWeight(vID, 1)
+	err = vdrs.Add(vID, nil, ids.Empty, 1)
 	require.NoError(t, err)
 	resourceTracker, err := tracker.NewResourceTracker(
 		prometheus.NewRegistry(),
@@ -912,7 +944,9 @@ func TestValidatorOnlyMessageDrops(t *testing.T) {
 		nil,
 		nil,
 		time.Second,
+		engineType,
 		resourceTracker,
+		validators.UnhandledSubnetConnector,
 	)
 	require.NoError(t, err)
 
@@ -958,8 +992,13 @@ func TestValidatorOnlyMessageDrops(t *testing.T) {
 	nID := ids.GenerateTestNodeID()
 
 	calledF = false
-	inMsg = message.InboundPullQuery(ctx.ChainID, reqID, time.Hour, dummyContainerID,
+	inMsg = message.InboundPullQuery(
+		ctx.ChainID,
+		reqID,
+		time.Hour,
+		dummyContainerID,
 		nID,
+		engineType,
 	)
 	chainRouter.HandleInbound(context.Background(), inMsg)
 
@@ -968,8 +1007,13 @@ func TestValidatorOnlyMessageDrops(t *testing.T) {
 	// Validator case
 	calledF = false
 	reqID++
-	inMsg = message.InboundPullQuery(ctx.ChainID, reqID, time.Hour, dummyContainerID,
+	inMsg = message.InboundPullQuery(
+		ctx.ChainID,
+		reqID,
+		time.Hour,
+		dummyContainerID,
 		vID,
+		engineType,
 	)
 	wg.Add(1)
 	chainRouter.HandleInbound(context.Background(), inMsg)
@@ -986,15 +1030,15 @@ func TestValidatorOnlyMessageDrops(t *testing.T) {
 		ctx.ChainID,
 		reqID,
 		message.ChitsOp,
-		message.InternalQueryFailed(vID, ctx.ChainID, reqID),
+		message.InternalQueryFailed(vID, ctx.ChainID, reqID, engineType),
 	)
 	require.Equal(t, 1, chainRouter.timedRequests.Len())
 
 	// remove it from validators
-	err = vdrs.Set(validators.NewSet().List())
+	err = vdrs.RemoveWeight(vID, 1)
 	require.NoError(t, err)
 
-	inMsg = message.InboundChits(ctx.ChainID, reqID, nil, nID)
+	inMsg = message.InboundChits(ctx.ChainID, reqID, nil, nil, nID, engineType)
 	chainRouter.HandleInbound(context.Background(), inMsg)
 
 	// shouldn't clear out timed request, as the request should be cleared when
@@ -1026,8 +1070,9 @@ func TestRouterCrossChainMessages(t *testing.T) {
 		logging.NoLog{},
 		tm,
 		time.Millisecond,
-		ids.Set{},
-		ids.Set{},
+		set.Set[ids.ID]{},
+		true,
+		set.Set[ids.ID]{},
 		nil,
 		HealthConfig{},
 		"",
@@ -1037,7 +1082,7 @@ func TestRouterCrossChainMessages(t *testing.T) {
 
 	// Set up validators
 	vdrs := validators.NewSet()
-	require.NoError(t, vdrs.AddWeight(ids.GenerateTestNodeID(), 1))
+	require.NoError(t, vdrs.Add(ids.GenerateTestNodeID(), nil, ids.Empty, 1))
 
 	// Create bootstrapper, engine and handler
 	requester := snow.DefaultConsensusContextTest()
@@ -1060,7 +1105,9 @@ func TestRouterCrossChainMessages(t *testing.T) {
 		nil,
 		nil,
 		time.Second,
+		engineType,
 		resourceTracker,
+		validators.UnhandledSubnetConnector,
 	)
 	require.NoError(t, err)
 
@@ -1076,7 +1123,9 @@ func TestRouterCrossChainMessages(t *testing.T) {
 		nil,
 		nil,
 		time.Second,
+		engineType,
 		resourceTracker,
+		validators.UnhandledSubnetConnector,
 	)
 	require.NoError(t, err)
 
@@ -1131,4 +1180,99 @@ func TestRouterCrossChainMessages(t *testing.T) {
 	)
 	chainRouter.HandleInbound(context.Background(), msg)
 	require.Equal(t, 2, chainRouter.chains[requester.ChainID].Len())
+}
+
+func TestConnectedSubnet(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	tm, err := timeout.NewManager(
+		&timer.AdaptiveTimeoutConfig{
+			InitialTimeout:     3 * time.Second,
+			MinimumTimeout:     3 * time.Second,
+			MaximumTimeout:     5 * time.Minute,
+			TimeoutCoefficient: 1,
+			TimeoutHalflife:    5 * time.Minute,
+		},
+		benchlist.NewNoBenchlist(),
+		"timeoutManager",
+		prometheus.NewRegistry(),
+	)
+	require.NoError(t, err)
+	go tm.Dispatch()
+
+	// Create chain router
+	myNodeID := ids.GenerateTestNodeID()
+	peerNodeID := ids.GenerateTestNodeID()
+	subnetID0 := ids.GenerateTestID()
+	subnetID1 := ids.GenerateTestID()
+	trackedSubnets := set.Set[ids.ID]{}
+	trackedSubnets.Add(subnetID0, subnetID1)
+	chainRouter := ChainRouter{}
+	err = chainRouter.Initialize(
+		myNodeID,
+		logging.NoLog{},
+		tm,
+		time.Millisecond,
+		set.Set[ids.ID]{},
+		true,
+		trackedSubnets,
+		nil,
+		HealthConfig{},
+		"",
+		prometheus.NewRegistry(),
+	)
+	require.NoError(t, err)
+
+	// Create bootstrapper, engine and handler
+	platform := snow.DefaultConsensusContextTest()
+	platform.ChainID = constants.PlatformChainID
+	platform.SubnetID = constants.PrimaryNetworkID
+	platform.Registerer = prometheus.NewRegistry()
+	platform.Metrics = metrics.NewOptionalGatherer()
+	platform.Executing(false)
+	platform.SetState(snow.NormalOp)
+
+	myConnectedMsg := message.InternalConnected(myNodeID, version.CurrentApp)
+	mySubnetConnectedMsg0 := message.InternalConnectedSubnet(myNodeID, subnetID0)
+	mySubnetConnectedMsg1 := message.InternalConnectedSubnet(myNodeID, subnetID1)
+
+	platformHandler := handler.NewMockHandler(ctrl)
+	platformHandler.EXPECT().Context().Return(platform).AnyTimes()
+	platformHandler.EXPECT().SetOnStopped(gomock.Any()).AnyTimes()
+	platformHandler.EXPECT().Push(gomock.Any(), myConnectedMsg).Times(1)
+	platformHandler.EXPECT().Push(gomock.Any(), mySubnetConnectedMsg0).Times(1)
+	platformHandler.EXPECT().Push(gomock.Any(), mySubnetConnectedMsg1).Times(1)
+
+	chainRouter.AddChain(context.Background(), platformHandler)
+
+	peerConnectedMsg := message.InternalConnected(peerNodeID, version.CurrentApp)
+	platformHandler.EXPECT().Push(gomock.Any(), peerConnectedMsg).Times(1)
+	chainRouter.Connected(peerNodeID, version.CurrentApp, constants.PrimaryNetworkID)
+
+	peerSubnetConnectedMsg0 := message.InternalConnectedSubnet(peerNodeID, subnetID0)
+	platformHandler.EXPECT().Push(gomock.Any(), peerSubnetConnectedMsg0).Times(1)
+	chainRouter.Connected(peerNodeID, version.CurrentApp, subnetID0)
+
+	myDisconnectedMsg := message.InternalDisconnected(myNodeID)
+	platformHandler.EXPECT().Push(gomock.Any(), myDisconnectedMsg).Times(1)
+	chainRouter.Benched(constants.PlatformChainID, myNodeID)
+
+	peerDisconnectedMsg := message.InternalDisconnected(peerNodeID)
+	platformHandler.EXPECT().Push(gomock.Any(), peerDisconnectedMsg).Times(1)
+	chainRouter.Benched(constants.PlatformChainID, peerNodeID)
+
+	platformHandler.EXPECT().Push(gomock.Any(), myConnectedMsg).Times(1)
+	platformHandler.EXPECT().Push(gomock.Any(), mySubnetConnectedMsg0).Times(1)
+	platformHandler.EXPECT().Push(gomock.Any(), mySubnetConnectedMsg1).Times(1)
+
+	chainRouter.Unbenched(constants.PlatformChainID, myNodeID)
+
+	platformHandler.EXPECT().Push(gomock.Any(), peerConnectedMsg).Times(1)
+	platformHandler.EXPECT().Push(gomock.Any(), peerSubnetConnectedMsg0).Times(1)
+
+	chainRouter.Unbenched(constants.PlatformChainID, peerNodeID)
+
+	platformHandler.EXPECT().Push(gomock.Any(), peerDisconnectedMsg).Times(1)
+	chainRouter.Disconnected(peerNodeID)
 }

@@ -27,6 +27,7 @@ import (
 var (
 	errUnknownVertex       = errors.New("unknown vertex")
 	errParsedUnknownVertex = errors.New("parsed unknown vertex")
+	errUnknownTx           = errors.New("unknown tx")
 )
 
 func newConfig(t *testing.T) (Config, ids.NodeID, *common.SenderTest, *vertex.TestManager, *vertex.TestVM) {
@@ -57,7 +58,7 @@ func newConfig(t *testing.T) (Config, ids.NodeID, *common.SenderTest, *vertex.Te
 	sender.CantSendGetAcceptedFrontier = false
 
 	peer := ids.GenerateTestNodeID()
-	if err := peers.AddWeight(peer, 1); err != nil {
+	if err := peers.Add(peer, nil, ids.Empty, 1); err != nil {
 		t.Fatal(err)
 	}
 
@@ -398,7 +399,7 @@ func TestBootstrapperTxDependencies(t *testing.T) {
 		case bytes.Equal(b, txBytes1):
 			return tx1, nil
 		default:
-			return nil, errors.New("wrong tx")
+			return nil, errUnknownTx
 		}
 	}
 

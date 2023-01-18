@@ -354,10 +354,13 @@ func TestUnverifiedParentPanicRegression(t *testing.T) {
 	baseDBManager := manager.NewMemDB(version.Semantic1_0_0)
 	atomicDB := prefixdb.New([]byte{1}, baseDBManager.Current().Database)
 
+	vdrs := validators.NewManager()
+	primaryVdrs := validators.NewSet()
+	_ = vdrs.Add(constants.PrimaryNetworkID, primaryVdrs)
 	vm := &VM{Factory: Factory{
 		Config: config.Config{
 			Chains:                 chains.MockManager{},
-			Validators:             validators.NewManager(),
+			Validators:             vdrs,
 			UptimeLockedCalculator: uptime.NewLockedCalculator(),
 			MinStakeDuration:       defaultMinStakingDuration,
 			MaxStakeDuration:       defaultMaxStakingDuration,
@@ -369,9 +372,7 @@ func TestUnverifiedParentPanicRegression(t *testing.T) {
 	ctx := defaultContext()
 	ctx.Lock.Lock()
 	defer func() {
-		if err := vm.Shutdown(context.Background()); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(vm.Shutdown(context.Background()))
 		ctx.Lock.Unlock()
 	}()
 
@@ -387,9 +388,7 @@ func TestUnverifiedParentPanicRegression(t *testing.T) {
 		nil,
 		nil,
 	)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(err)
 
 	m := atomic.NewMemory(atomicDB)
 	vm.ctx.SharedMemory = m.NewSharedMemory(ctx.ChainID)
@@ -671,6 +670,8 @@ func TestRejectedStateRegressionInvalidValidatorTimestamp(t *testing.T) {
 	}
 
 	// Force a reload of the state from the database.
+	vm.Config.Validators = validators.NewManager()
+	vm.Config.Validators.Add(constants.PrimaryNetworkID, validators.NewSet())
 	is, err := state.New(
 		vm.dbManager.Current().Database,
 		nil,
@@ -986,6 +987,8 @@ func TestRejectedStateRegressionInvalidValidatorReward(t *testing.T) {
 	}
 
 	// Force a reload of the state from the database.
+	vm.Config.Validators = validators.NewManager()
+	vm.Config.Validators.Add(constants.PrimaryNetworkID, validators.NewSet())
 	is, err := state.New(
 		vm.dbManager.Current().Database,
 		nil,
@@ -1051,7 +1054,9 @@ func TestValidatorSetAtCacheOverwriteRegression(t *testing.T) {
 	}
 	validators, err := vm.GetValidatorSet(context.Background(), 1, constants.PrimaryNetworkID)
 	require.NoError(err)
-	require.Equal(expectedValidators1, validators)
+	for nodeID, weight := range expectedValidators1 {
+		require.Equal(weight, validators[nodeID].Weight)
+	}
 
 	newValidatorStartTime0 := vm.clock.Time().Add(txexecutor.SyncBound).Add(1 * time.Second)
 	newValidatorEndTime0 := newValidatorStartTime0.Add(defaultMaxStakingDuration)
@@ -1098,7 +1103,9 @@ func TestValidatorSetAtCacheOverwriteRegression(t *testing.T) {
 	for i := uint64(1); i <= 2; i++ {
 		validators, err = vm.GetValidatorSet(context.Background(), i, constants.PrimaryNetworkID)
 		require.NoError(err)
-		require.Equal(expectedValidators1, validators)
+		for nodeID, weight := range expectedValidators1 {
+			require.Equal(weight, validators[nodeID].Weight)
+		}
 	}
 
 	// Advance chain time to move the first new validator from the pending
@@ -1131,7 +1138,9 @@ func TestValidatorSetAtCacheOverwriteRegression(t *testing.T) {
 	for i := uint64(1); i <= 2; i++ {
 		validators, err = vm.GetValidatorSet(context.Background(), i, constants.PrimaryNetworkID)
 		require.NoError(err)
-		require.Equal(expectedValidators1, validators)
+		for nodeID, weight := range expectedValidators1 {
+			require.Equal(weight, validators[nodeID].Weight)
+		}
 	}
 
 	expectedValidators2 := map[ids.NodeID]uint64{
@@ -1144,7 +1153,9 @@ func TestValidatorSetAtCacheOverwriteRegression(t *testing.T) {
 	}
 	validators, err = vm.GetValidatorSet(context.Background(), 3, constants.PrimaryNetworkID)
 	require.NoError(err)
-	require.Equal(expectedValidators2, validators)
+	for nodeID, weight := range expectedValidators2 {
+		require.Equal(weight, validators[nodeID].Weight)
+	}
 }
 
 func TestAddDelegatorTxAddBeforeRemove(t *testing.T) {

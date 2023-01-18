@@ -10,6 +10,7 @@ import (
 
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/utils/metric"
+	"github.com/ava-labs/avalanchego/utils/set"
 	"github.com/ava-labs/avalanchego/utils/wrappers"
 	"github.com/ava-labs/avalanchego/vms/platformvm/blocks"
 )
@@ -52,7 +53,7 @@ type Metrics interface {
 func New(
 	namespace string,
 	registerer prometheus.Registerer,
-	whitelistedSubnets ids.Set,
+	trackedSubnets set.Set[ids.ID],
 ) (Metrics, error) {
 	blockMetrics, err := newBlockMetrics(namespace, registerer)
 	m := &metrics{
@@ -150,8 +151,8 @@ func New(
 		registerer.Register(m.validatorSetsDuration),
 	)
 
-	// init subnet tracker metrics with whitelisted subnets
-	for subnetID := range whitelistedSubnets {
+	// init subnet tracker metrics with tracked subnets
+	for subnetID := range trackedSubnets {
 		// initialize to 0
 		m.subnetPercentConnected.WithLabelValues(subnetID.String()).Set(0)
 	}

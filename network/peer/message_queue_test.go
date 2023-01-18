@@ -9,7 +9,9 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/message"
+	"github.com/ava-labs/avalanchego/proto/pb/p2p"
 	"github.com/ava-labs/avalanchego/utils/logging"
 )
 
@@ -31,7 +33,13 @@ func TestMessageQueue(t *testing.T) {
 
 	// Assert that the messages are popped in the same order they were pushed
 	for i := 0; i < numToSend; i++ {
-		m, err := mc.Pong(uint8(i))
+		testID := ids.GenerateTestID()
+		testID2 := ids.GenerateTestID()
+		m, err := mc.Pong(uint32(i),
+			[]*p2p.SubnetUptime{
+				{SubnetId: testID[:], Uptime: uint32(i)},
+				{SubnetId: testID2[:], Uptime: uint32(i)},
+			})
 		require.NoError(err)
 		msgs = append(msgs, m)
 	}

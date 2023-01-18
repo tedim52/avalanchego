@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"net/http"
 
+	"golang.org/x/exp/maps"
+
 	"github.com/ava-labs/avalanchego/api"
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/utils/formatting"
@@ -35,7 +37,7 @@ func (w *WalletService) decided(txID ids.ID) {
 }
 
 func (w *WalletService) issue(txBytes []byte) (ids.ID, error) {
-	tx, err := w.vm.parser.Parse(txBytes)
+	tx, err := w.vm.parser.ParseTx(txBytes)
 	if err != nil {
 		return ids.ID{}, err
 	}
@@ -76,14 +78,7 @@ func (w *WalletService) update(utxos []*avax.UTXO) ([]*avax.UTXO, error) {
 			utxoMap[utxo.InputID()] = utxo
 		}
 	}
-
-	newUTXOs := make([]*avax.UTXO, len(utxoMap))
-	i := 0
-	for _, utxo := range utxoMap {
-		newUTXOs[i] = utxo
-		i++
-	}
-	return newUTXOs, nil
+	return maps.Values(utxoMap), nil
 }
 
 // IssueTx attempts to issue a transaction into consensus

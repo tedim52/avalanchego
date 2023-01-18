@@ -31,7 +31,7 @@ service VM {
   rpc Connected(ConnectedRequest) returns (google.protobuf.Empty);
   rpc Disconnected(DisconnectedRequest) returns (google.protobuf.Empty);
   // Attempt to create a new block from data contained in the VM.
-  rpc BuildBlock(google.protobuf.Empty) returns (BuildBlockResponse);
+  rpc BuildBlock(BuildBlockRequest) returns (BuildBlockResponse);
   // Attempt to create a block from a stream of bytes.
   rpc ParseBlock(ParseBlockRequest) returns (ParseBlockResponse);
   // Attempt to load a block.
@@ -89,21 +89,47 @@ service VM {
   rpc StateSummaryAccept(StateSummaryAcceptRequest) returns (StateSummaryAcceptResponse);
 }
 
+enum State {
+  STATE_UNSPECIFIED = 0;
+  STATE_STATE_SYNCING = 1;
+  STATE_BOOTSTRAPPING = 2;
+  STATE_NORMAL_OP = 3;
+}
+
+enum Status {
+  STATUS_UNSPECIFIED = 0;
+  STATUS_PROCESSING = 1;
+  STATUS_REJECTED = 2;
+  STATUS_ACCEPTED = 3;
+}
+
+enum Error {
+  // ERROR_UNSPECIFIED is used to indicate that no error occurred.
+  ERROR_UNSPECIFIED = 0;
+  ERROR_CLOSED = 1;
+  ERROR_NOT_FOUND = 2;
+  ERROR_HEIGHT_INDEX_NOT_IMPLEMENTED = 3;
+  ERROR_HEIGHT_INDEX_INCOMPLETE = 4;
+  ERROR_STATE_SYNC_NOT_IMPLEMENTED = 5;
+}
+
 message InitializeRequest {
   uint32 network_id = 1;
   bytes subnet_id = 2;
   bytes chain_id = 3;
   bytes node_id = 4;
   bytes x_chain_id = 5;
-  bytes avax_asset_id = 6;
-  bytes genesis_bytes = 7;
-  bytes upgrade_bytes = 8;
-  bytes config_bytes = 9;
-  repeated VersionedDBServer db_servers = 10;
+  bytes c_chain_id = 6;
+  bytes avax_asset_id = 7;
+  string chain_data_dir = 8;
+  bytes genesis_bytes = 9;
+  bytes upgrade_bytes = 10;
+  bytes config_bytes = 11;
+  repeated VersionedDBServer db_servers = 12;
   // server_addr is the address of the gRPC server which serves
   // the messenger, keystore, shared memory, blockchain alias,
   // subnet alias, and appSender services
-  string server_addr = 11;
+  string server_addr = 13;
 }
 
 message InitializeResponse {
@@ -122,7 +148,7 @@ message VersionedDBServer {
 }
 
 message SetStateRequest {
-  uint32 state = 1;
+  State state = 1;
 }
 
 message SetStateResponse {
@@ -149,13 +175,18 @@ message Handler {
   string server_addr = 3;
 }
 
+message BuildBlockRequest {
+  optional uint64 p_chain_height = 1;
+}
+
+// Note: The status of a freshly built block is assumed to be Processing.
 message BuildBlockResponse {
   bytes id = 1;
   bytes parent_id = 2;
   bytes bytes = 3;
   uint64 height = 4;
   google.protobuf.Timestamp timestamp = 5;
-  // status is always processing
+  bool verify_with_context = 6;
 }
 
 message ParseBlockRequest {
@@ -165,9 +196,10 @@ message ParseBlockRequest {
 message ParseBlockResponse {
   bytes id = 1;
   bytes parent_id = 2;
-  uint32 status = 3;
+  Status status = 3;
   uint64 height = 4;
   google.protobuf.Timestamp timestamp = 5;
+  bool verify_with_context = 6;
 }
 
 message GetBlockRequest {
@@ -177,11 +209,12 @@ message GetBlockRequest {
 message GetBlockResponse {
   bytes parent_id = 1;
   bytes bytes = 2;
-  uint32 status = 3;
+  Status status = 3;
   uint64 height = 4;
   google.protobuf.Timestamp timestamp = 5;
   // used to propagate database.ErrNotFound through RPC
-  uint32 err = 6;
+  Error err = 6;
+  bool verify_with_context = 7;
 }
 
 message SetPreferenceRequest {
@@ -190,6 +223,10 @@ message SetPreferenceRequest {
 
 message BlockVerifyRequest {
   bytes bytes = 1;
+
+  // If set, the VM server casts the block to a [block.WithVerifyContext] and
+  // calls [VerifyWithContext] instead of [Verify].
+  optional uint64 p_chain_height = 2;
 }
 
 message BlockVerifyResponse {
@@ -302,7 +339,7 @@ message BatchedParseBlockResponse {
 }
 
 message VerifyHeightIndexResponse {
-  uint32 err = 1;
+  Error err = 1;
 }
 
 message GetBlockIDAtHeightRequest {
@@ -311,7 +348,7 @@ message GetBlockIDAtHeightRequest {
 
 message GetBlockIDAtHeightResponse {
   bytes blk_id = 1;
-  uint32 err = 2;
+  Error err = 2;
 }
 
 message GatherResponse {
@@ -320,21 +357,21 @@ message GatherResponse {
 
 message StateSyncEnabledResponse {
   bool enabled = 1;
-  uint32 err = 2;
+  Error err = 2;
 }
 
 message GetOngoingSyncStateSummaryResponse {
   bytes id = 1;
   uint64 height = 2;
   bytes bytes = 3;
-  uint32 err = 4;
+  Error err = 4;
 }
 
 message GetLastStateSummaryResponse {
   bytes id = 1;
   uint64 height = 2;
   bytes bytes = 3;
-  uint32 err = 4;
+  Error err = 4;
 }
 
 message ParseStateSummaryRequest {
@@ -344,7 +381,7 @@ message ParseStateSummaryRequest {
 message ParseStateSummaryResponse {
   bytes id = 1;
   uint64 height = 2;
-  uint32 err = 3;
+  Error err = 3;
 }
 
 message GetStateSummaryRequest {
@@ -354,7 +391,7 @@ message GetStateSummaryRequest {
 message GetStateSummaryResponse {
   bytes id = 1;
   bytes bytes = 2;
-  uint32 err = 3;
+  Error err = 3;
 }
 
 message StateSummaryAcceptRequest {
@@ -362,6 +399,12 @@ message StateSummaryAcceptRequest {
 }
 
 message StateSummaryAcceptResponse {
-  bool accepted = 1;
-  uint32 err = 2;
+  enum Mode {
+    MODE_UNSPECIFIED = 0;
+    MODE_SKIPPED = 1;
+    MODE_STATIC = 2;
+    MODE_DYNAMIC = 3;
+  }
+  Mode mode = 1;
+  Error err = 2;
 }

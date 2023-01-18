@@ -6,25 +6,16 @@ package rpcdb
 import (
 	"context"
 	"encoding/json"
-	"sync/atomic"
 
 	"google.golang.org/protobuf/types/known/emptypb"
 
 	"github.com/ava-labs/avalanchego/database"
 	"github.com/ava-labs/avalanchego/database/nodb"
 	"github.com/ava-labs/avalanchego/utils"
-	"github.com/ava-labs/avalanchego/utils/units"
+	"github.com/ava-labs/avalanchego/utils/set"
 	"github.com/ava-labs/avalanchego/utils/wrappers"
 
 	rpcdbpb "github.com/ava-labs/avalanchego/proto/pb/rpcdb"
-)
-
-const (
-	maxBatchSize = 128 * units.KiB
-
-	// baseElementSize is an approximation of the protobuf encoding overhead per
-	// element
-	baseElementSize = 8 // bytes
 )
 
 var (
@@ -37,8 +28,7 @@ var (
 type DatabaseClient struct {
 	client rpcdbpb.DatabaseClient
 
-	closed     utils.AtomicBool
-	batchIndex int64
+	closed utils.AtomicBool
 }
 
 // NewClient returns a database instance connected to a remote database instance
@@ -54,7 +44,7 @@ func (db *DatabaseClient) Has(key []byte) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return resp.Has, errCodeToError[resp.Err]
+	return resp.Has, errEnumToError[resp.Err]
 }
 
 // Get attempts to return the value that was mapped to the key that was provided
@@ -65,7 +55,7 @@ func (db *DatabaseClient) Get(key []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return resp.Value, errCodeToError[resp.Err]
+	return resp.Value, errEnumToError[resp.Err]
 }
 
 // Put attempts to set the value this key maps to
@@ -77,7 +67,7 @@ func (db *DatabaseClient) Put(key, value []byte) error {
 	if err != nil {
 		return err
 	}
-	return errCodeToError[resp.Err]
+	return errEnumToError[resp.Err]
 }
 
 // Delete attempts to remove any mapping from the key
@@ -88,7 +78,7 @@ func (db *DatabaseClient) Delete(key []byte) error {
 	if err != nil {
 		return err
 	}
-	return errCodeToError[resp.Err]
+	return errEnumToError[resp.Err]
 }
 
 // NewBatch returns a new batch
@@ -132,7 +122,7 @@ func (db *DatabaseClient) Compact(start, limit []byte) error {
 	if err != nil {
 		return err
 	}
-	return errCodeToError[resp.Err]
+	return errEnumToError[resp.Err]
 }
 
 // Close attempts to close the database
@@ -142,7 +132,7 @@ func (db *DatabaseClient) Close() error {
 	if err != nil {
 		return err
 	}
-	return errCodeToError[resp.Err]
+	return errEnumToError[resp.Err]
 }
 
 func (db *DatabaseClient) HealthCheck(ctx context.Context) (interface{}, error) {
@@ -183,34 +173,15 @@ func (b *batch) Size() int {
 }
 
 func (b *batch) Write() error {
-	request := &rpcdbpb.WriteBatchRequest{
-		Id:        atomic.AddInt64(&b.db.batchIndex, 1),
-		Continues: true,
-	}
-	currentSize := 0
-	keySet := make(map[string]struct{}, len(b.writes))
+	request := &rpcdbpb.WriteBatchRequest{}
+	keySet := set.NewSet[string](len(b.writes))
 	for i := len(b.writes) - 1; i >= 0; i-- {
 		kv := b.writes[i]
 		key := string(kv.key)
-		if _, overwritten := keySet[key]; overwritten {
+		if keySet.Contains(key) {
 			continue
 		}
-		keySet[key] = struct{}{}
-
-		sizeChange := baseElementSize + len(kv.key) + len(kv.value)
-		if newSize := currentSize + sizeChange; newSize > maxBatchSize {
-			resp, err := b.db.client.WriteBatch(context.Background(), request)
-			if err != nil {
-				return err
-			}
-			if err := errCodeToError[resp.Err]; err != nil {
-				return err
-			}
-			currentSize = 0
-			request.Deletes = request.Deletes[:0]
-			request.Puts = request.Puts[:0]
-		}
-		currentSize += sizeChange
+		keySet.Add(key)
 
 		if kv.delete {
 			request.Deletes = append(request.Deletes, &rpcdbpb.DeleteRequest{
@@ -224,12 +195,11 @@ func (b *batch) Write() error {
 		}
 	}
 
-	request.Continues = false
 	resp, err := b.db.client.WriteBatch(context.Background(), request)
 	if err != nil {
 		return err
 	}
-	return errCodeToError[resp.Err]
+	return errEnumToError[resp.Err]
 }
 
 func (b *batch) Reset() {
@@ -303,7 +273,7 @@ func (it *iterator) Error() error {
 	if err != nil {
 		it.errs.Add(err)
 	} else {
-		it.errs.Add(errCodeToError[resp.Err])
+		it.errs.Add(errEnumToError[resp.Err])
 	}
 	return it.errs.Err
 }
@@ -332,6 +302,6 @@ func (it *iterator) Release() {
 	if err != nil {
 		it.errs.Add(err)
 	} else {
-		it.errs.Add(errCodeToError[resp.Err])
+		it.errs.Add(errEnumToError[resp.Err])
 	}
 }

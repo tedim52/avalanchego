@@ -18,7 +18,9 @@ import (
 	"github.com/ava-labs/avalanchego/snow/consensus/snowman"
 	"github.com/ava-labs/avalanchego/snow/consensus/snowman/poll"
 	"github.com/ava-labs/avalanchego/snow/engine/common"
+	"github.com/ava-labs/avalanchego/snow/engine/common/tracker"
 	"github.com/ava-labs/avalanchego/snow/events"
+	"github.com/ava-labs/avalanchego/utils/set"
 	"github.com/ava-labs/avalanchego/utils/wrappers"
 	"github.com/ava-labs/avalanchego/version"
 )
@@ -65,6 +67,9 @@ type Transitive struct {
 	// occurs.
 	nonVerifiedCache cache.Cacher
 
+	// acceptedFrontiers of the other validators of this chain
+	acceptedFrontiers tracker.Accepted
+
 	// operations that are blocked on a block being issued. This could be
 	// issuing another block, responding to a query, or applying votes to consensus
 	blocked events.Blocker
@@ -88,6 +93,10 @@ func newTransitive(config Config) (*Transitive, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	acceptedFrontiers := tracker.NewAccepted()
+	config.Validators.RegisterCallbackListener(acceptedFrontiers)
+
 	factory := poll.NewEarlyTermNoTraversalFactory(config.Params.Alpha)
 	t := &Transitive{
 		Config:                      config,
@@ -99,6 +108,7 @@ func newTransitive(config Config) (*Transitive, error) {
 		pending:                     make(map[ids.ID]snowman.Block),
 		nonVerifieds:                NewAncestorTree(),
 		nonVerifiedCache:            nonVerifiedCache,
+		acceptedFrontiers:           acceptedFrontiers,
 		polls: poll.NewSet(factory,
 			config.Ctx.Log,
 			"",
@@ -180,7 +190,7 @@ func (t *Transitive) GetFailed(ctx context.Context, nodeID ids.NodeID, requestID
 }
 
 func (t *Transitive) PullQuery(ctx context.Context, nodeID ids.NodeID, requestID uint32, blkID ids.ID) error {
-	t.Sender.SendChits(ctx, nodeID, requestID, []ids.ID{t.Consensus.Preference()})
+	t.sendChits(ctx, nodeID, requestID)
 
 	// Try to issue [blkID] to consensus.
 	// If we're missing an ancestor, request it from [vdr]
@@ -192,7 +202,7 @@ func (t *Transitive) PullQuery(ctx context.Context, nodeID ids.NodeID, requestID
 }
 
 func (t *Transitive) PushQuery(ctx context.Context, nodeID ids.NodeID, requestID uint32, blkBytes []byte) error {
-	t.Sender.SendChits(ctx, nodeID, requestID, []ids.ID{t.Consensus.Preference()})
+	t.sendChits(ctx, nodeID, requestID)
 
 	blk, err := t.VM.ParseBlock(ctx, blkBytes)
 	// If parsing fails, we just drop the request, as we didn't ask for it
@@ -227,7 +237,9 @@ func (t *Transitive) PushQuery(ctx context.Context, nodeID ids.NodeID, requestID
 	return t.buildBlocks(ctx)
 }
 
-func (t *Transitive) Chits(ctx context.Context, nodeID ids.NodeID, requestID uint32, votes []ids.ID) error {
+func (t *Transitive) Chits(ctx context.Context, nodeID ids.NodeID, requestID uint32, votes []ids.ID, accepted []ids.ID) error {
+	t.acceptedFrontiers.SetAcceptedFrontier(nodeID, accepted)
+
 	// Since this is a linear chain, there should only be one ID in the vote set
 	if len(votes) != 1 {
 		t.Ctx.Log.Debug("failing Chits",
@@ -271,6 +283,13 @@ func (t *Transitive) Chits(ctx context.Context, nodeID ids.NodeID, requestID uin
 }
 
 func (t *Transitive) QueryFailed(ctx context.Context, nodeID ids.NodeID, requestID uint32) error {
+	lastAccepted := t.acceptedFrontiers.AcceptedFrontier(nodeID)
+	if len(lastAccepted) == 1 {
+		// Chits calls QueryFailed if [votes] doesn't have length 1, so this
+		// check is required to avoid infinite mutual recursion.
+		return t.Chits(ctx, nodeID, requestID, lastAccepted, lastAccepted)
+	}
+
 	t.blocked.Register(
 		ctx,
 		&voter{
@@ -357,16 +376,20 @@ func (t *Transitive) Shutdown(ctx context.Context) error {
 }
 
 func (t *Transitive) Notify(ctx context.Context, msg common.Message) error {
-	if msg != common.PendingTxs {
+	switch msg {
+	case common.PendingTxs:
+		// the pending txs message means we should attempt to build a block.
+		t.pendingBuildBlocks++
+		return t.buildBlocks(ctx)
+	case common.StateSyncDone:
+		t.Ctx.RunningStateSync(false)
+		return nil
+	default:
 		t.Ctx.Log.Warn("received an unexpected message from the VM",
 			zap.Stringer("messageString", msg),
 		)
 		return nil
 	}
-
-	// the pending txs message means we should attempt to build a block.
-	t.pendingBuildBlocks++
-	return t.buildBlocks(ctx)
 }
 
 func (t *Transitive) Context() *snow.ConsensusContext {
@@ -460,6 +483,15 @@ func (t *Transitive) GetBlock(ctx context.Context, blkID ids.ID) (snowman.Block,
 	}
 
 	return t.VM.GetBlock(ctx, blkID)
+}
+
+func (t *Transitive) sendChits(ctx context.Context, nodeID ids.NodeID, requestID uint32) {
+	lastAccepted := t.Consensus.LastAccepted()
+	if t.Ctx.IsRunningStateSync() {
+		t.Sender.SendChits(ctx, nodeID, requestID, []ids.ID{lastAccepted}, []ids.ID{lastAccepted})
+	} else {
+		t.Sender.SendChits(ctx, nodeID, requestID, []ids.ID{t.Consensus.Preference()}, []ids.ID{lastAccepted})
+	}
 }
 
 // Build blocks if they have been requested and the number of processing blocks
@@ -586,12 +618,13 @@ func (t *Transitive) issueWithAncestors(ctx context.Context, blk snowman.Block) 
 	// issue [blk] and its ancestors into consensus
 	status := blk.Status()
 	for status.Fetched() && !t.wasIssued(blk) {
-		if err := t.issue(ctx, blk); err != nil {
+		err := t.issue(ctx, blk)
+		if err != nil {
 			return false, err
 		}
 		blkID = blk.Parent()
-		var err error
-		if blk, err = t.GetBlock(ctx, blkID); err != nil {
+		blk, err = t.GetBlock(ctx, blkID)
+		if err != nil {
 			status = choices.Unknown
 			break
 		}
@@ -685,7 +718,7 @@ func (t *Transitive) pullQuery(ctx context.Context, blkID ids.ID) {
 		zap.Stringer("validators", t.Validators),
 	)
 	// The validators we will query
-	vdrs, err := t.Validators.Sample(t.Params.K)
+	vdrIDs, err := t.Validators.Sample(t.Params.K)
 	if err != nil {
 		t.Ctx.Log.Error("dropped query for block",
 			zap.String("reason", "insufficient number of validators"),
@@ -695,14 +728,12 @@ func (t *Transitive) pullQuery(ctx context.Context, blkID ids.ID) {
 	}
 
 	vdrBag := ids.NodeIDBag{}
-	for _, vdr := range vdrs {
-		vdrBag.Add(vdr.ID())
-	}
+	vdrBag.Add(vdrIDs...)
 
 	t.RequestID++
 	if t.polls.Add(t.RequestID, vdrBag) {
 		vdrList := vdrBag.List()
-		vdrSet := ids.NewNodeIDSet(len(vdrList))
+		vdrSet := set.NewSet[ids.NodeID](len(vdrList))
 		vdrSet.Add(vdrList...)
 		t.Sender.SendPullQuery(ctx, vdrSet, t.RequestID, blkID)
 	}
@@ -716,7 +747,7 @@ func (t *Transitive) sendMixedQuery(ctx context.Context, blk snowman.Block) {
 	)
 
 	blkID := blk.ID()
-	vdrs, err := t.Validators.Sample(t.Params.K)
+	vdrIDs, err := t.Validators.Sample(t.Params.K)
 	if err != nil {
 		t.Ctx.Log.Error("dropped query for block",
 			zap.String("reason", "insufficient number of validators"),
@@ -726,9 +757,7 @@ func (t *Transitive) sendMixedQuery(ctx context.Context, blk snowman.Block) {
 	}
 
 	vdrBag := ids.NodeIDBag{}
-	for _, vdr := range vdrs {
-		vdrBag.Add(vdr.ID())
-	}
+	vdrBag.Add(vdrIDs...)
 
 	t.RequestID++
 	if t.polls.Add(t.RequestID, vdrBag) {

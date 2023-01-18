@@ -19,14 +19,14 @@ import (
 
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/message"
+	"github.com/ava-labs/avalanchego/proto/pb/p2p"
 	"github.com/ava-labs/avalanchego/utils"
 	"github.com/ava-labs/avalanchego/utils/constants"
 	"github.com/ava-labs/avalanchego/utils/ips"
 	"github.com/ava-labs/avalanchego/utils/json"
+	"github.com/ava-labs/avalanchego/utils/set"
 	"github.com/ava-labs/avalanchego/utils/wrappers"
 	"github.com/ava-labs/avalanchego/version"
-
-	p2ppb "github.com/ava-labs/avalanchego/proto/pb/p2p"
 )
 
 var (
@@ -74,17 +74,22 @@ type Peer interface {
 
 	// TrackedSubnets returns the subnets this peer is running. It should only
 	// be called after [Ready] returns true.
-	TrackedSubnets() ids.Set
+	TrackedSubnets() set.Set[ids.ID]
 
-	// ObservedUptime returns the local node's uptime according to the peer. The
-	// value ranges from [0, 100]. It should only be called after [Ready]
-	// returns true.
-	ObservedUptime() uint32
+	// ObservedUptime returns the local node's subnet uptime according to the
+	// peer. The value ranges from [0, 100]. It should only be called after
+	// [Ready] returns true.
+	ObservedUptime(subnetID ids.ID) (uint32, bool)
 
 	// Send attempts to send [msg] to the peer. The peer takes ownership of
 	// [msg] for reference counting. This returns false if the message is
 	// guaranteed not to be delivered to the peer.
 	Send(ctx context.Context, msg message.OutboundMessage) bool
+
+	// StartSendPeerList attempts to send a PeerList message to this peer on
+	// this peer's gossip routine. It is not guaranteed that a PeerList will be
+	// sent.
+	StartSendPeerList()
 
 	// StartClose will begin shutting down the peer. It will not block.
 	StartClose()
@@ -122,11 +127,12 @@ type peer struct {
 	version *version.Application
 	// trackedSubnets is the subset of subnetIDs the peer sent us in the Version
 	// message that we are also tracking.
-	trackedSubnets ids.Set
+	trackedSubnets set.Set[ids.ID]
 
-	observedUptimeLock sync.RWMutex
-	// [observedUptimeLock] must be held while accessing [observedUptime]
-	observedUptime uint32
+	observedUptimesLock sync.RWMutex
+	// [observedUptimesLock] must be held while accessing [observedUptime]
+	// Subnet ID --> Our uptime for the given subnet as perceived by the peer
+	observedUptimes map[ids.ID]uint32
 
 	// True if this peer has sent us a valid Version message and
 	// is running a compatible version.
@@ -157,6 +163,10 @@ type peer struct {
 	// Unix time of the last message sent and received respectively
 	// Must only be accessed atomically
 	lastSent, lastReceived int64
+
+	// peerListChan signals that we should attempt to send a PeerList to this
+	// peer
+	peerListChan chan struct{}
 }
 
 // Start a new peer instance.
@@ -182,11 +192,13 @@ func Start(
 		onClosingCtx:       onClosingCtx,
 		onClosingCtxCancel: onClosingCtxCancel,
 		onClosed:           make(chan struct{}),
+		observedUptimes:    make(map[ids.ID]uint32),
+		peerListChan:       make(chan struct{}, 1),
 	}
 
 	go p.readMessages()
 	go p.writeMessages()
-	go p.sendPings()
+	go p.sendNetworkMessages()
 
 	return p
 }
@@ -230,18 +242,36 @@ func (p *peer) AwaitReady(ctx context.Context) error {
 
 func (p *peer) Info() Info {
 	publicIPStr := ""
-	if !p.ip.IP.IP.IsZero() {
-		publicIPStr = p.ip.IP.IP.String()
+	if !p.ip.IsZero() {
+		publicIPStr = p.ip.IPPort.String()
 	}
+
+	trackedSubnets := p.trackedSubnets.List()
+	uptimes := make(map[ids.ID]json.Uint32, len(trackedSubnets))
+
+	for _, subnetID := range trackedSubnets {
+		uptime, exist := p.ObservedUptime(subnetID)
+		if !exist {
+			continue
+		}
+		uptimes[subnetID] = json.Uint32(uptime)
+	}
+
+	primaryUptime, exist := p.ObservedUptime(constants.PrimaryNetworkID)
+	if !exist {
+		primaryUptime = 0
+	}
+
 	return Info{
-		IP:             p.conn.RemoteAddr().String(),
-		PublicIP:       publicIPStr,
-		ID:             p.id,
-		Version:        p.version.String(),
-		LastSent:       time.Unix(atomic.LoadInt64(&p.lastSent), 0),
-		LastReceived:   time.Unix(atomic.LoadInt64(&p.lastReceived), 0),
-		ObservedUptime: json.Uint32(p.ObservedUptime()),
-		TrackedSubnets: p.trackedSubnets.List(),
+		IP:                    p.conn.RemoteAddr().String(),
+		PublicIP:              publicIPStr,
+		ID:                    p.id,
+		Version:               p.version.String(),
+		LastSent:              time.Unix(atomic.LoadInt64(&p.lastSent), 0),
+		LastReceived:          time.Unix(atomic.LoadInt64(&p.lastReceived), 0),
+		ObservedUptime:        json.Uint32(primaryUptime),
+		ObservedSubnetUptimes: uptimes,
+		TrackedSubnets:        trackedSubnets,
 	}
 }
 
@@ -253,19 +283,27 @@ func (p *peer) Version() *version.Application {
 	return p.version
 }
 
-func (p *peer) TrackedSubnets() ids.Set {
+func (p *peer) TrackedSubnets() set.Set[ids.ID] {
 	return p.trackedSubnets
 }
 
-func (p *peer) ObservedUptime() uint32 {
-	p.observedUptimeLock.RLock()
-	uptime := p.observedUptime
-	p.observedUptimeLock.RUnlock()
-	return uptime
+func (p *peer) ObservedUptime(subnetID ids.ID) (uint32, bool) {
+	p.observedUptimesLock.RLock()
+	defer p.observedUptimesLock.RUnlock()
+
+	uptime, exist := p.observedUptimes[subnetID]
+	return uptime, exist
 }
 
 func (p *peer) Send(ctx context.Context, msg message.OutboundMessage) bool {
 	return p.messageQueue.Push(ctx, msg)
+}
+
+func (p *peer) StartSendPeerList() {
+	select {
+	case p.peerListChan <- struct{}{}:
+	default:
+	}
 }
 
 func (p *peer) StartClose() {
@@ -451,7 +489,23 @@ func (p *peer) writeMessages() {
 	writer := bufio.NewWriterSize(p.conn, p.Config.WriteBufferSize)
 
 	// Make sure that the version is the first message sent
-	msg, err := p.Network.Version()
+	mySignedIP, err := p.IPSigner.GetSignedIP()
+	if err != nil {
+		p.Log.Error("failed to get signed IP",
+			zap.Error(err),
+		)
+		return
+	}
+
+	msg, err := p.MessageCreator.Version(
+		p.NetworkID,
+		p.Clock.Unix(),
+		mySignedIP.IPPort,
+		p.VersionCompatibility.Version().String(),
+		mySignedIP.Timestamp,
+		mySignedIP.Signature,
+		p.MySubnets.List(),
+	)
 	if err != nil {
 		p.Log.Error("failed to create message",
 			zap.Stringer("messageOp", message.VersionOp),
@@ -530,7 +584,7 @@ func (p *peer) writeMessage(writer io.Writer, msg message.OutboundMessage) {
 	p.Metrics.Sent(msg)
 }
 
-func (p *peer) sendPings() {
+func (p *peer) sendNetworkMessages() {
 	sendPingsTicker := time.NewTicker(p.PingFrequency)
 	defer func() {
 		sendPingsTicker.Stop()
@@ -541,6 +595,40 @@ func (p *peer) sendPings() {
 
 	for {
 		select {
+		case <-p.peerListChan:
+			peerIPs, err := p.Config.Network.Peers(p.id)
+			if err != nil {
+				p.Log.Error("failed to get peers to gossip",
+					zap.Stringer("nodeID", p.id),
+					zap.Error(err),
+				)
+				return
+			}
+
+			if len(peerIPs) == 0 {
+				p.Log.Debug(
+					"skipping peer gossip as there are no unknown peers",
+					zap.Stringer("nodeID", p.id),
+				)
+				continue
+			}
+
+			// Bypass throttling is disabled here to follow the non-handshake
+			// message sending pattern.
+			msg, err := p.Config.MessageCreator.PeerList(peerIPs, false /*=bypassThrottling*/)
+			if err != nil {
+				p.Log.Error("failed to create peer list message",
+					zap.Stringer("nodeID", p.id),
+					zap.Error(err),
+				)
+				continue
+			}
+
+			if !p.Send(p.onClosingCtx, msg) {
+				p.Log.Debug("failed to send peer list",
+					zap.Stringer("nodeID", p.id),
+				)
+			}
 		case <-sendPingsTicker.C:
 			if !p.Network.AllowConnection(p.id) {
 				p.Log.Debug("disconnecting from peer",
@@ -580,20 +668,24 @@ func (p *peer) sendPings() {
 
 func (p *peer) handle(msg message.InboundMessage) {
 	switch m := msg.Message().(type) { // Network-related message types
-	case *p2ppb.Ping:
+	case *p2p.Ping:
 		p.handlePing(m)
 		msg.OnFinishedHandling()
 		return
-	case *p2ppb.Pong:
+	case *p2p.Pong:
 		p.handlePong(m)
 		msg.OnFinishedHandling()
 		return
-	case *p2ppb.Version:
+	case *p2p.Version:
 		p.handleVersion(m)
 		msg.OnFinishedHandling()
 		return
-	case *p2ppb.PeerList:
+	case *p2p.PeerList:
 		p.handlePeerList(m)
+		msg.OnFinishedHandling()
+		return
+	case *p2p.PeerListAck:
+		p.handlePeerListAck(m)
 		msg.OnFinishedHandling()
 		return
 	}
@@ -612,8 +704,41 @@ func (p *peer) handle(msg message.InboundMessage) {
 	p.Router.HandleInbound(context.Background(), msg)
 }
 
-func (p *peer) handlePing(_ *p2ppb.Ping) {
-	msg, err := p.Network.Pong(p.id)
+func (p *peer) handlePing(*p2p.Ping) {
+	primaryUptime, err := p.UptimeCalculator.CalculateUptimePercent(
+		p.id,
+		constants.PrimaryNetworkID,
+	)
+	if err != nil {
+		p.Log.Debug("failed to get peer primary uptime percentage",
+			zap.Stringer("nodeID", p.id),
+			zap.Stringer("subnetID", constants.PrimaryNetworkID),
+			zap.Error(err),
+		)
+		primaryUptime = 0
+	}
+
+	subnetUptimes := make([]*p2p.SubnetUptime, 0, p.trackedSubnets.Len())
+	for subnetID := range p.trackedSubnets {
+		subnetUptime, err := p.UptimeCalculator.CalculateUptimePercent(p.id, subnetID)
+		if err != nil {
+			p.Log.Debug("failed to get peer uptime percentage",
+				zap.Stringer("nodeID", p.id),
+				zap.Stringer("subnetID", subnetID),
+				zap.Error(err),
+			)
+			continue
+		}
+
+		subnetID := subnetID
+		subnetUptimes = append(subnetUptimes, &p2p.SubnetUptime{
+			SubnetId: subnetID[:],
+			Uptime:   uint32(subnetUptime * 100),
+		})
+	}
+
+	primaryUptimePercent := uint32(primaryUptime * 100)
+	msg, err := p.MessageCreator.Pong(primaryUptimePercent, subnetUptimes)
 	if err != nil {
 		p.Log.Error("failed to create message",
 			zap.Stringer("messageOp", message.PongOp),
@@ -624,22 +749,51 @@ func (p *peer) handlePing(_ *p2ppb.Ping) {
 	p.Send(p.onClosingCtx, msg)
 }
 
-func (p *peer) handlePong(msg *p2ppb.Pong) {
-	if msg.UptimePct > 100 {
+func (p *peer) handlePong(msg *p2p.Pong) {
+	if msg.Uptime > 100 {
 		p.Log.Debug("dropping pong message with invalid uptime",
 			zap.Stringer("nodeID", p.id),
-			zap.Uint32("uptime", msg.UptimePct),
+			zap.Uint32("uptime", msg.Uptime),
 		)
 		p.StartClose()
 		return
 	}
+	p.observeUptime(constants.PrimaryNetworkID, msg.Uptime)
 
-	p.observedUptimeLock.Lock()
-	p.observedUptime = msg.UptimePct // [0, 100] percentage
-	p.observedUptimeLock.Unlock()
+	for _, subnetUptime := range msg.SubnetUptimes {
+		subnetID, err := ids.ToID(subnetUptime.SubnetId)
+		if err != nil {
+			p.Log.Debug("dropping pong message with invalid subnetID",
+				zap.Stringer("nodeID", p.id),
+				zap.Error(err),
+			)
+			p.StartClose()
+			return
+		}
+
+		uptime := subnetUptime.Uptime
+		if uptime > 100 {
+			p.Log.Debug("dropping pong message with invalid uptime",
+				zap.Stringer("nodeID", p.id),
+				zap.Stringer("subnetID", subnetID),
+				zap.Uint32("uptime", uptime),
+			)
+			p.StartClose()
+			return
+		}
+		p.observeUptime(subnetID, uptime)
+	}
 }
 
-func (p *peer) handleVersion(msg *p2ppb.Version) {
+// Record that the given peer perceives our uptime for the given [subnetID]
+// to be [uptime].
+func (p *peer) observeUptime(subnetID ids.ID, uptime uint32) {
+	p.observedUptimesLock.Lock()
+	p.observedUptimes[subnetID] = uptime // [0, 100] percentage
+	p.observedUptimesLock.Unlock()
+}
+
+func (p *peer) handleVersion(msg *p2p.Version) {
 	if p.gotVersion.GetValue() {
 		// TODO: this should never happen, should we close the connection here?
 		p.Log.Verbo("dropping duplicated version message",
@@ -754,9 +908,9 @@ func (p *peer) handleVersion(msg *p2ppb.Version) {
 	}
 
 	p.ip = &SignedIP{
-		IP: UnsignedIP{
-			IP: ips.IPPort{
-				IP:   net.IP(msg.IpAddr),
+		UnsignedIP: UnsignedIP{
+			IPPort: ips.IPPort{
+				IP:   msg.IpAddr,
 				Port: uint16(msg.IpPort),
 			},
 			Timestamp: msg.MyVersionTime,
@@ -774,18 +928,35 @@ func (p *peer) handleVersion(msg *p2ppb.Version) {
 
 	p.gotVersion.SetValue(true)
 
-	peerlistMsg, err := p.Network.Peers()
+	peerIPs, err := p.Network.Peers(p.id)
 	if err != nil {
-		p.Log.Error("failed to create message",
+		p.Log.Error("failed to get peers to gossip for handshake",
+			zap.Stringer("nodeID", p.id),
+			zap.Error(err),
+		)
+		return
+	}
+
+	// We bypass throttling here to ensure that the version message is
+	// acknowledged timely.
+	peerListMsg, err := p.Config.MessageCreator.PeerList(peerIPs, true /*=bypassThrottling*/)
+	if err != nil {
+		p.Log.Error("failed to create peer list handshake message",
+			zap.Stringer("nodeID", p.id),
 			zap.Stringer("messageOp", message.PeerListOp),
 			zap.Error(err),
 		)
 		return
 	}
-	p.Send(p.onClosingCtx, peerlistMsg)
+
+	if !p.Send(p.onClosingCtx, peerListMsg) {
+		p.Log.Error("failed to send peer list for handshake",
+			zap.Stringer("nodeID", p.id),
+		)
+	}
 }
 
-func (p *peer) handlePeerList(msg *p2ppb.PeerList) {
+func (p *peer) handlePeerList(msg *p2p.PeerList) {
 	if !p.finishedHandshake.GetValue() {
 		if !p.gotVersion.GetValue() {
 			return
@@ -796,7 +967,9 @@ func (p *peer) handlePeerList(msg *p2ppb.PeerList) {
 		close(p.onFinishHandshake)
 	}
 
-	for _, claimedIPPort := range msg.ClaimedIpPorts {
+	// the peers this peer told us about
+	discoveredIPs := make([]*ips.ClaimedIPPort, len(msg.ClaimedIpPorts))
+	for i, claimedIPPort := range msg.ClaimedIpPorts {
 		tlsCert, err := x509.ParseCertificate(claimedIPPort.X509Certificate)
 		if err != nil {
 			p.Log.Debug("message with invalid field",
@@ -821,18 +994,79 @@ func (p *peer) handlePeerList(msg *p2ppb.PeerList) {
 			return
 		}
 
-		ip := ips.ClaimedIPPort{
+		// TODO: After the next network upgrade, require txIDs to be populated.
+		var txID ids.ID
+		if len(claimedIPPort.TxId) > 0 {
+			txID, err = ids.ToID(claimedIPPort.TxId)
+			if err != nil {
+				p.Log.Debug("message with invalid field",
+					zap.Stringer("nodeID", p.id),
+					zap.Stringer("messageOp", message.PeerListOp),
+					zap.String("field", "txID"),
+					zap.Error(err),
+				)
+				p.StartClose()
+				return
+			}
+		}
+
+		discoveredIPs[i] = &ips.ClaimedIPPort{
 			Cert: tlsCert,
 			IPPort: ips.IPPort{
-				IP:   net.IP(claimedIPPort.IpAddr),
+				IP:   claimedIPPort.IpAddr,
 				Port: uint16(claimedIPPort.IpPort),
 			},
 			Timestamp: claimedIPPort.Timestamp,
 			Signature: claimedIPPort.Signature,
+			TxID:      txID,
 		}
-		if !p.Network.Track(ip) {
-			p.Metrics.NumUselessPeerListBytes.Add(float64(ip.BytesLen()))
-		}
+	}
+
+	trackedPeers, err := p.Network.Track(p.id, discoveredIPs)
+	if err != nil {
+		p.Log.Debug("message with invalid field",
+			zap.Stringer("nodeID", p.id),
+			zap.Stringer("messageOp", message.PeerListOp),
+			zap.String("field", "claimedIP"),
+			zap.Error(err),
+		)
+		p.StartClose()
+		return
+	}
+	if len(trackedPeers) == 0 {
+		p.Log.Debug("skipping peerlist ack as there were no tracked peers",
+			zap.Stringer("nodeID", p.id),
+		)
+		return
+	}
+
+	peerListAckMsg, err := p.Config.MessageCreator.PeerListAck(trackedPeers)
+	if err != nil {
+		p.Log.Error("failed to create message",
+			zap.Stringer("nodeID", p.id),
+			zap.Stringer("messageOp", message.PeerListAckOp),
+			zap.Error(err),
+		)
+		return
+	}
+
+	if !p.Send(p.onClosingCtx, peerListAckMsg) {
+		p.Log.Debug("failed to send peer list ack",
+			zap.Stringer("nodeID", p.id),
+		)
+	}
+}
+
+func (p *peer) handlePeerListAck(msg *p2p.PeerListAck) {
+	err := p.Network.MarkTracked(p.id, msg.PeerAcks)
+	if err != nil {
+		p.Log.Debug("message with invalid field",
+			zap.Stringer("nodeID", p.id),
+			zap.Stringer("messageOp", message.PeerListAckOp),
+			zap.String("field", "txID"),
+			zap.Error(err),
+		)
+		p.StartClose()
 	}
 }
 

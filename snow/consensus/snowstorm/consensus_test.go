@@ -20,6 +20,7 @@ import (
 	"github.com/ava-labs/avalanchego/snow"
 	"github.com/ava-labs/avalanchego/snow/choices"
 	"github.com/ava-labs/avalanchego/utils"
+	"github.com/ava-labs/avalanchego/utils/set"
 	"github.com/ava-labs/avalanchego/utils/wrappers"
 
 	sbcon "github.com/ava-labs/avalanchego/snow/consensus/snowball"
@@ -56,6 +57,8 @@ var (
 	}
 
 	Red, Green, Blue, Alpha *TestTx
+
+	errTest = errors.New("non-nil error")
 )
 
 //  R - G - B - A
@@ -665,7 +668,7 @@ func AddNonEmptyWhitelistTest(t *testing.T, factory Factory) {
 		InputIDsV:     []ids.ID{ids.GenerateTestID()},
 		DependenciesV: []Tx{tx1, tx2, tx3, tx4},
 		HasWhitelistV: true,
-		WhitelistV: ids.Set{
+		WhitelistV: set.Set[ids.ID]{
 			tx1.IDV: struct{}{},
 			tx2.IDV: struct{}{},
 			tx3.IDV: struct{}{},
@@ -690,7 +693,7 @@ func AddNonEmptyWhitelistTest(t *testing.T, factory Factory) {
 		InputIDsV:     []ids.ID{ids.GenerateTestID()},
 		DependenciesV: []Tx{tx1, tx2, tx6},
 		HasWhitelistV: true,
-		WhitelistV: ids.Set{
+		WhitelistV: set.Set[ids.ID]{
 			tx1.IDV: struct{}{},
 			tx2.IDV: struct{}{},
 			tx6.IDV: struct{}{},
@@ -713,14 +716,14 @@ func AddNonEmptyWhitelistTest(t *testing.T, factory Factory) {
 	require.Equal(t, 2., mss["whitelist_tx_processing"])
 
 	vset1 := graph.Virtuous()
-	if !vset1.Equals(ids.Set{
+	if !vset1.Equals(set.Set[ids.ID]{
 		tx1.IDV: struct{}{},
 		tx2.IDV: struct{}{},
 	}) {
 		t.Fatalf("unexpected virtuous %v", vset1)
 	}
 	pset1 := graph.Preferences()
-	if !pset1.Equals(ids.Set{
+	if !pset1.Equals(set.Set[ids.ID]{
 		tx1.IDV:  struct{}{},
 		tx2.IDV:  struct{}{},
 		tx3.IDV:  struct{}{},
@@ -746,13 +749,13 @@ func AddNonEmptyWhitelistTest(t *testing.T, factory Factory) {
 	}
 
 	vset2 := graph.Virtuous()
-	if !vset2.Equals(ids.Set{
+	if !vset2.Equals(set.Set[ids.ID]{
 		tx2.IDV: struct{}{},
 	}) {
 		t.Fatalf("unexpected virtuous %v", vset2)
 	}
 	pset2 := graph.Preferences()
-	if !pset2.Equals(ids.Set{
+	if !pset2.Equals(set.Set[ids.ID]{
 		tx2.IDV:  struct{}{},
 		tx3.IDV:  struct{}{},
 		tx4.IDV:  struct{}{},
@@ -866,7 +869,7 @@ func WhitelistConflictsTest(t *testing.T, factory Factory) {
 	for i := range txIDs {
 		txIDs[i] = ids.GenerateTestID()
 	}
-	allTxIDs := ids.NewSet(n)
+	allTxIDs := set.NewSet[ids.ID](n)
 	allTxIDs.Add(txIDs...)
 
 	// each spending each other
@@ -888,7 +891,7 @@ func WhitelistConflictsTest(t *testing.T, factory Factory) {
 		}
 	}
 
-	whitelist := ids.NewSet(1)
+	whitelist := set.NewSet[ids.ID](1)
 	whitelist.Add(ids.GenerateTestID())
 
 	// make whitelist transaction that conflicts with tx outside of its
@@ -1474,7 +1477,7 @@ func ErrorOnVacuouslyAcceptedTest(t *testing.T, factory Factory) {
 
 	purple := &TestTx{TestDecidable: choices.TestDecidable{
 		IDV:     ids.Empty.Prefix(7),
-		AcceptV: errors.New(""),
+		AcceptV: errTest,
 		StatusV: choices.Processing,
 	}}
 
@@ -1503,7 +1506,7 @@ func ErrorOnAcceptedTest(t *testing.T, factory Factory) {
 
 	purple := &TestTx{TestDecidable: choices.TestDecidable{
 		IDV:     ids.Empty.Prefix(7),
-		AcceptV: errors.New(""),
+		AcceptV: errTest,
 		StatusV: choices.Processing,
 	}}
 	purple.InputIDsV = append(purple.InputIDsV, ids.Empty.Prefix(4))
@@ -1547,7 +1550,7 @@ func ErrorOnRejectingLowerConfidenceConflictTest(t *testing.T, factory Factory) 
 
 	pink := &TestTx{TestDecidable: choices.TestDecidable{
 		IDV:     ids.Empty.Prefix(8),
-		RejectV: errors.New(""),
+		RejectV: errTest,
 		StatusV: choices.Processing,
 	}}
 	pink.InputIDsV = append(pink.InputIDsV, x)
@@ -1593,7 +1596,7 @@ func ErrorOnRejectingHigherConfidenceConflictTest(t *testing.T, factory Factory)
 
 	pink := &TestTx{TestDecidable: choices.TestDecidable{
 		IDV:     ids.Empty.Prefix(8),
-		RejectV: errors.New(""),
+		RejectV: errTest,
 		StatusV: choices.Processing,
 	}}
 	pink.InputIDsV = append(pink.InputIDsV, x)

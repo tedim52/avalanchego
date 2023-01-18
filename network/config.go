@@ -10,15 +10,20 @@ import (
 
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/network/dialer"
+	"github.com/ava-labs/avalanchego/network/peer"
 	"github.com/ava-labs/avalanchego/network/throttling"
 	"github.com/ava-labs/avalanchego/snow/networking/tracker"
 	"github.com/ava-labs/avalanchego/snow/uptime"
 	"github.com/ava-labs/avalanchego/snow/validators"
 	"github.com/ava-labs/avalanchego/utils/ips"
+	"github.com/ava-labs/avalanchego/utils/set"
 )
 
 // HealthConfig describes parameters for network layer health checks.
 type HealthConfig struct {
+	// Marks if the health check should be enabled
+	Enabled bool `json:"-"`
+
 	// MinConnectedPeers is the minimum number of peers that the network should
 	// be connected to to be considered healthy.
 	MinConnectedPeers uint `json:"minConnectedPeers"`
@@ -124,9 +129,9 @@ type Config struct {
 	// TLSKey is this node's TLS key that is used to sign IPs.
 	TLSKey crypto.Signer `json:"-"`
 
-	// WhitelistedSubnets of the node.
-	WhitelistedSubnets ids.Set        `json:"-"`
-	Beacons            validators.Set `json:"-"`
+	// TrackedSubnets of the node.
+	TrackedSubnets set.Set[ids.ID] `json:"-"`
+	Beacons        validators.Set  `json:"-"`
 
 	// Validators are the current validators in the Avalanche network
 	Validators validators.Manager `json:"-"`
@@ -170,4 +175,7 @@ type Config struct {
 	// Specifies how much disk usage each peer can cause before
 	// we rate-limit them.
 	DiskTargeter tracker.Targeter `json:"-"`
+
+	// Tracks which validators have been sent to which peers
+	GossipTracker peer.GossipTracker `json:"-"`
 }

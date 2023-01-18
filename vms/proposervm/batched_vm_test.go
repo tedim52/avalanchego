@@ -7,7 +7,6 @@ import (
 	"bytes"
 	"context"
 	"crypto"
-	"errors"
 	"testing"
 	"time"
 
@@ -628,7 +627,7 @@ func TestBatchedParseBlockPreForkOnly(t *testing.T) {
 			case bytes.Equal(blkBytes, coreBlk3.Bytes()):
 				res = append(res, coreBlk3)
 			default:
-				return nil, errors.New("Unexpected call to parse unknown block")
+				return nil, errUnknownBlock
 			}
 		}
 		return res, nil
@@ -734,7 +733,7 @@ func TestBatchedParseBlockPostForkOnly(t *testing.T) {
 			case bytes.Equal(blkBytes, coreBlk3.Bytes()):
 				res = append(res, coreBlk3)
 			default:
-				return nil, errors.New("Unexpected call to parse unknown block")
+				return nil, errUnknownBlock
 			}
 		}
 		return res, nil
@@ -894,7 +893,7 @@ func TestBatchedParseBlockAtSnomanPlusPlusFork(t *testing.T) {
 			case bytes.Equal(blkBytes, coreBlk4.Bytes()):
 				res = append(res, coreBlk4)
 			default:
-				return nil, errors.New("Unexpected call to parse unknown block")
+				return nil, errUnknownBlock
 			}
 		}
 		return res, nil
@@ -980,7 +979,14 @@ func initTestRemoteProposerVM(
 		}
 	}
 
-	proVM := New(coreVM, proBlkStartTime, 0, DefaultMinBlockDelay)
+	proVM := New(
+		coreVM,
+		proBlkStartTime,
+		0,
+		DefaultMinBlockDelay,
+		pTestCert.PrivateKey.(crypto.Signer),
+		pTestCert.Leaf,
+	)
 
 	valState := &validators.TestState{
 		T: t,
@@ -991,19 +997,29 @@ func initTestRemoteProposerVM(
 	valState.GetCurrentHeightF = func(context.Context) (uint64, error) {
 		return defaultPChainHeight, nil
 	}
-	valState.GetValidatorSetF = func(context.Context, uint64, ids.ID) (map[ids.NodeID]uint64, error) {
-		res := make(map[ids.NodeID]uint64)
-		res[proVM.ctx.NodeID] = uint64(10)
-		res[ids.NodeID{1}] = uint64(5)
-		res[ids.NodeID{2}] = uint64(6)
-		res[ids.NodeID{3}] = uint64(7)
-		return res, nil
+	valState.GetValidatorSetF = func(context.Context, uint64, ids.ID) (map[ids.NodeID]*validators.GetValidatorOutput, error) {
+		return map[ids.NodeID]*validators.GetValidatorOutput{
+			proVM.ctx.NodeID: {
+				NodeID: proVM.ctx.NodeID,
+				Weight: 10,
+			},
+			{1}: {
+				NodeID: ids.NodeID{1},
+				Weight: 5,
+			},
+			{2}: {
+				NodeID: ids.NodeID{2},
+				Weight: 6,
+			},
+			{3}: {
+				NodeID: ids.NodeID{3},
+				Weight: 7,
+			},
+		}, nil
 	}
 
 	ctx := snow.DefaultContextTest()
 	ctx.NodeID = ids.NodeIDFromCert(pTestCert.Leaf)
-	ctx.StakingCertLeaf = pTestCert.Leaf
-	ctx.StakingLeafSigner = pTestCert.PrivateKey.(crypto.Signer)
 	ctx.ValidatorState = valState
 
 	dummyDBManager := manager.NewMemDB(version.Semantic1_0_0)

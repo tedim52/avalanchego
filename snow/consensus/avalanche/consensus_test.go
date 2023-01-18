@@ -20,38 +20,44 @@ import (
 	"github.com/ava-labs/avalanchego/snow/choices"
 	"github.com/ava-labs/avalanchego/snow/consensus/snowball"
 	"github.com/ava-labs/avalanchego/snow/consensus/snowstorm"
+	"github.com/ava-labs/avalanchego/utils/compare"
+	"github.com/ava-labs/avalanchego/utils/set"
 )
 
 type testFunc func(*testing.T, Factory)
 
-var testFuncs = []testFunc{
-	MetricsTest,
-	NumProcessingTest,
-	AddTest,
-	VertexIssuedTest,
-	TxIssuedTest,
-	VirtuousTest,
-	VirtuousSkippedUpdateTest,
-	VotingTest,
-	IgnoreInvalidVotingTest,
-	IgnoreInvalidTransactionVertexVotingTest,
-	TransitiveVotingTest,
-	SplitVotingTest,
-	TransitiveRejectionTest,
-	IsVirtuousTest,
-	QuiesceTest,
-	QuiesceAfterVotingTest,
-	TransactionVertexTest,
-	OrphansTest,
-	OrphansUpdateTest,
-	ErrorOnVacuousAcceptTest,
-	ErrorOnTxAcceptTest,
-	ErrorOnVtxAcceptTest,
-	ErrorOnVtxRejectTest,
-	ErrorOnParentVtxRejectTest,
-	ErrorOnTransitiveVtxRejectTest,
-	SilenceTransactionVertexEventsTest,
-}
+var (
+	testFuncs = []testFunc{
+		MetricsTest,
+		NumProcessingTest,
+		AddTest,
+		VertexIssuedTest,
+		TxIssuedTest,
+		VirtuousTest,
+		VirtuousSkippedUpdateTest,
+		VotingTest,
+		IgnoreInvalidVotingTest,
+		IgnoreInvalidTransactionVertexVotingTest,
+		TransitiveVotingTest,
+		SplitVotingTest,
+		TransitiveRejectionTest,
+		IsVirtuousTest,
+		QuiesceTest,
+		QuiesceAfterVotingTest,
+		TransactionVertexTest,
+		OrphansTest,
+		OrphansUpdateTest,
+		ErrorOnVacuousAcceptTest,
+		ErrorOnTxAcceptTest,
+		ErrorOnVtxAcceptTest,
+		ErrorOnVtxRejectTest,
+		ErrorOnParentVtxRejectTest,
+		ErrorOnTransitiveVtxRejectTest,
+		SilenceTransactionVertexEventsTest,
+	}
+
+	errTest = errors.New("non-nil error")
+)
 
 func runConsensusTests(t *testing.T, factory Factory) {
 	for _, test := range testFuncs {
@@ -299,7 +305,7 @@ func AddTest(t *testing.T, factory Factory) {
 	if !avl.Finalized() {
 		t.Fatal("An empty avalanche instance is not finalized")
 	}
-	if !ids.UnsortedEquals([]ids.ID{seedVertices[0].ID(), seedVertices[1].ID()}, avl.Preferences().List()) {
+	if !compare.UnsortedEquals([]ids.ID{seedVertices[0].ID(), seedVertices[1].ID()}, avl.Preferences().List()) {
 		t.Fatal("Initial frontier failed to be set")
 	}
 
@@ -383,7 +389,7 @@ func AddTest(t *testing.T, factory Factory) {
 				t.Fatalf("#%d-%d: expected finalized %v, got %v", i, j, finalized, tv.finalized)
 			}
 			preferenceSet := avl.Preferences().List()
-			if !ids.UnsortedEquals(tv.preferenceSet, preferenceSet) {
+			if !compare.UnsortedEquals(tv.preferenceSet, preferenceSet) {
 				t.Fatalf("#%d-%d: expected preferenceSet %v, got %v", i, j, preferenceSet, tv.preferenceSet)
 			}
 			if accepted, _ := consensusEvents.IsAccepted(tv.toAdd.ID()); accepted != tv.accepted {
@@ -863,7 +869,7 @@ func VotingTest(t *testing.T, factory Factory) {
 		t.Fatal(err)
 	case avl.Finalized():
 		t.Fatalf("An avalanche instance finalized too early")
-	case !ids.UnsortedEquals([]ids.ID{vtx1.IDV}, avl.Preferences().List()):
+	case !compare.UnsortedEquals([]ids.ID{vtx1.IDV}, avl.Preferences().List()):
 		t.Fatalf("Initial frontier failed to be set")
 	case tx0.Status() != choices.Processing:
 		t.Fatalf("Tx should have been Processing")
@@ -879,7 +885,7 @@ func VotingTest(t *testing.T, factory Factory) {
 		t.Fatal(err)
 	case !avl.Finalized():
 		t.Fatalf("An avalanche instance finalized too late")
-	case !ids.UnsortedEquals([]ids.ID{vtx1.IDV}, avl.Preferences().List()):
+	case !compare.UnsortedEquals([]ids.ID{vtx1.IDV}, avl.Preferences().List()):
 		// rejected vertex ID (vtx0) must have been removed from the preferred set
 		t.Fatalf("Initial frontier failed to be set")
 	case tx0.Status() != choices.Rejected:
@@ -1151,7 +1157,7 @@ func TransitiveVotingTest(t *testing.T, factory Factory) {
 		t.Fatal(err)
 	case avl.Finalized():
 		t.Fatalf("An avalanche instance finalized too early")
-	case !ids.UnsortedEquals([]ids.ID{vtx2.IDV}, avl.Preferences().List()):
+	case !compare.UnsortedEquals([]ids.ID{vtx2.IDV}, avl.Preferences().List()):
 		t.Fatalf("Initial frontier failed to be set")
 	case tx0.Status() != choices.Accepted:
 		t.Fatalf("Tx should have been accepted")
@@ -1167,7 +1173,7 @@ func TransitiveVotingTest(t *testing.T, factory Factory) {
 		t.Fatal(err)
 	case !avl.Finalized():
 		t.Fatalf("An avalanche instance finalized too late")
-	case !ids.UnsortedEquals([]ids.ID{vtx2.IDV}, avl.Preferences().List()):
+	case !compare.UnsortedEquals([]ids.ID{vtx2.IDV}, avl.Preferences().List()):
 		t.Fatalf("Initial frontier failed to be set")
 	case tx0.Status() != choices.Accepted:
 		t.Fatalf("Tx should have been accepted")
@@ -1252,7 +1258,7 @@ func SplitVotingTest(t *testing.T, factory Factory) {
 		t.Fatal(err)
 	case avl.Finalized(): // avalanche shouldn't be finalized because the vertex transactions are still processing
 		t.Fatalf("An avalanche instance finalized too late")
-	case !ids.UnsortedEquals([]ids.ID{vtx0.IDV, vtx1.IDV}, avl.Preferences().List()):
+	case !compare.UnsortedEquals([]ids.ID{vtx0.IDV, vtx1.IDV}, avl.Preferences().List()):
 		t.Fatalf("Initial frontier failed to be set")
 	case tx0.Status() != choices.Accepted:
 		t.Fatalf("Tx should have been accepted")
@@ -1269,7 +1275,7 @@ func SplitVotingTest(t *testing.T, factory Factory) {
 		t.Fatal(err)
 	case !avl.Finalized():
 		t.Fatalf("An avalanche instance finalized too late")
-	case !ids.UnsortedEquals([]ids.ID{vtx0.IDV, vtx1.IDV}, avl.Preferences().List()):
+	case !compare.UnsortedEquals([]ids.ID{vtx0.IDV, vtx1.IDV}, avl.Preferences().List()):
 		t.Fatalf("Initial frontier failed to be set")
 	case tx0.Status() != choices.Accepted:
 		t.Fatalf("Tx should have been accepted")
@@ -1376,7 +1382,7 @@ func TransitiveRejectionTest(t *testing.T, factory Factory) {
 		t.Fatal(err)
 	case avl.Finalized():
 		t.Fatalf("An avalanche instance finalized too early")
-	case !ids.UnsortedEquals([]ids.ID{vtx1.IDV}, avl.Preferences().List()):
+	case !compare.UnsortedEquals([]ids.ID{vtx1.IDV}, avl.Preferences().List()):
 		t.Fatalf("Initial frontier failed to be set")
 	}
 
@@ -1386,7 +1392,7 @@ func TransitiveRejectionTest(t *testing.T, factory Factory) {
 		t.Fatal(err)
 	case avl.Finalized():
 		t.Fatalf("An avalanche instance finalized too early")
-	case !ids.UnsortedEquals([]ids.ID{vtx1.IDV}, avl.Preferences().List()):
+	case !compare.UnsortedEquals([]ids.ID{vtx1.IDV}, avl.Preferences().List()):
 		t.Fatalf("Initial frontier failed to be set")
 	case tx0.Status() != choices.Rejected:
 		t.Fatalf("Tx should have been rejected")
@@ -1402,7 +1408,7 @@ func TransitiveRejectionTest(t *testing.T, factory Factory) {
 		t.Fatal(err)
 	case avl.Finalized():
 		t.Fatalf("An avalanche instance finalized too early")
-	case !ids.UnsortedEquals([]ids.ID{vtx1.IDV}, avl.Preferences().List()):
+	case !compare.UnsortedEquals([]ids.ID{vtx1.IDV}, avl.Preferences().List()):
 		t.Fatalf("Initial frontier failed to be set")
 	case tx0.Status() != choices.Rejected:
 		t.Fatalf("Tx should have been rejected")
@@ -1870,7 +1876,7 @@ func TransactionVertexTest(t *testing.T, factory Factory) {
 		t.Fatalf("vertex with no transaction should have been accepted after polling, got %v", vtx0.Status())
 	case !avl.Finalized():
 		t.Fatal("expected finalized avalanche instance")
-	case !ids.UnsortedEquals([]ids.ID{vtx0.IDV}, avl.Preferences().List()):
+	case !compare.UnsortedEquals([]ids.ID{vtx0.IDV}, avl.Preferences().List()):
 		t.Fatalf("unexpected frontier %v", avl.Preferences().List())
 	}
 }
@@ -2103,12 +2109,12 @@ func OrphansUpdateTest(t *testing.T, factory Factory) {
 	// vtx0 is virtuous, so it should be preferred. vtx1 and vtx2 conflict, but
 	// vtx1 was issued before vtx2, so vtx1 should be preferred and vtx2 should
 	// not be preferred.
-	expectedPreferredSet := ids.Set{
+	expectedPreferredSet := set.Set[ids.ID]{
 		vtx0.ID(): struct{}{},
 		vtx1.ID(): struct{}{},
 	}
 	preferenceSet := avl.Preferences().List()
-	if !ids.UnsortedEquals(expectedPreferredSet.List(), preferenceSet) {
+	if !compare.UnsortedEquals(expectedPreferredSet.List(), preferenceSet) {
 		t.Fatalf("expected preferenceSet %v, got %v", expectedPreferredSet, preferenceSet)
 	}
 
@@ -2122,20 +2128,20 @@ func OrphansUpdateTest(t *testing.T, factory Factory) {
 
 	// Because vtx2 was voted for over vtx1, they should be swapped in the
 	// preferred set.
-	expectedPreferredSet = ids.Set{
+	expectedPreferredSet = set.Set[ids.ID]{
 		vtx0.ID(): struct{}{},
 		vtx2.ID(): struct{}{},
 	}
 	preferenceSet = avl.Preferences().List()
-	if !ids.UnsortedEquals(expectedPreferredSet.List(), preferenceSet) {
+	if !compare.UnsortedEquals(expectedPreferredSet.List(), preferenceSet) {
 		t.Fatalf("expected preferenceSet %v, got %v", expectedPreferredSet, preferenceSet)
 	}
 
 	// Because there are no virtuous transactions that are not in a preferred
 	// vertex, there should be no orphans.
-	expectedOrphanSet := ids.Set{}
+	expectedOrphanSet := set.Set[ids.ID]{}
 	orphanSet := avl.Orphans()
-	if !ids.UnsortedEquals(expectedOrphanSet.List(), orphanSet.List()) {
+	if !compare.UnsortedEquals(expectedOrphanSet.List(), orphanSet.List()) {
 		t.Fatalf("expected orphanSet %v, got %v", expectedOrphanSet, orphanSet)
 	}
 }
@@ -2169,7 +2175,7 @@ func ErrorOnVacuousAcceptTest(t *testing.T, factory Factory) {
 
 	tx0 := &snowstorm.TestTx{TestDecidable: choices.TestDecidable{
 		IDV:     ids.GenerateTestID(),
-		AcceptV: errors.New(""),
+		AcceptV: errTest,
 		StatusV: choices.Processing,
 	}}
 
@@ -2218,7 +2224,7 @@ func ErrorOnTxAcceptTest(t *testing.T, factory Factory) {
 
 	tx0 := &snowstorm.TestTx{TestDecidable: choices.TestDecidable{
 		IDV:     ids.GenerateTestID(),
-		AcceptV: errors.New(""),
+		AcceptV: errTest,
 		StatusV: choices.Processing,
 	}}
 	tx0.InputIDsV = append(tx0.InputIDsV, utxos[0])
@@ -2281,7 +2287,7 @@ func ErrorOnVtxAcceptTest(t *testing.T, factory Factory) {
 	vtx0 := &TestVertex{
 		TestDecidable: choices.TestDecidable{
 			IDV:     ids.GenerateTestID(),
-			AcceptV: errors.New(""),
+			AcceptV: errTest,
 			StatusV: choices.Processing,
 		},
 		ParentsV: vts,
@@ -2353,7 +2359,7 @@ func ErrorOnVtxRejectTest(t *testing.T, factory Factory) {
 	vtx1 := &TestVertex{
 		TestDecidable: choices.TestDecidable{
 			IDV:     ids.GenerateTestID(),
-			RejectV: errors.New(""),
+			RejectV: errTest,
 			StatusV: choices.Processing,
 		},
 		ParentsV: vts,
@@ -2427,7 +2433,7 @@ func ErrorOnParentVtxRejectTest(t *testing.T, factory Factory) {
 	vtx1 := &TestVertex{
 		TestDecidable: choices.TestDecidable{
 			IDV:     ids.GenerateTestID(),
-			RejectV: errors.New(""),
+			RejectV: errTest,
 			StatusV: choices.Processing,
 		},
 		ParentsV: vts,
@@ -2523,7 +2529,7 @@ func ErrorOnTransitiveVtxRejectTest(t *testing.T, factory Factory) {
 	vtx2 := &TestVertex{
 		TestDecidable: choices.TestDecidable{
 			IDV:     ids.GenerateTestID(),
-			RejectV: errors.New(""),
+			RejectV: errTest,
 			StatusV: choices.Processing,
 		},
 		ParentsV: []Vertex{vtx1},

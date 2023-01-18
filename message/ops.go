@@ -7,7 +7,8 @@ import (
 	"errors"
 	"fmt"
 
-	p2ppb "github.com/ava-labs/avalanchego/proto/pb/p2p"
+	"github.com/ava-labs/avalanchego/proto/pb/p2p"
+	"github.com/ava-labs/avalanchego/utils/set"
 )
 
 // Op is an opcode
@@ -22,6 +23,7 @@ const (
 	PongOp
 	VersionOp
 	PeerListOp
+	PeerListAckOp
 	// State sync:
 	GetStateSummaryFrontierOp
 	GetStateSummaryFrontierFailedOp
@@ -58,6 +60,7 @@ const (
 	CrossChainAppResponseOp
 	// Internal:
 	ConnectedOp
+	ConnectedSubnetOp
 	DisconnectedOp
 	NotifyOp
 	GossipRequestOp
@@ -70,6 +73,7 @@ var (
 		PongOp,
 		VersionOp,
 		PeerListOp,
+		PeerListAckOp,
 	}
 
 	// List of all consensus request message types
@@ -116,6 +120,7 @@ var (
 		CrossChainAppRequestFailedOp,
 		CrossChainAppResponseOp,
 		ConnectedOp,
+		ConnectedSubnetOp,
 		DisconnectedOp,
 		NotifyOp,
 		GossipRequestOp,
@@ -153,6 +158,7 @@ var (
 		ChitsOp,
 		// Internal
 		ConnectedOp,
+		ConnectedSubnetOp,
 		DisconnectedOp,
 	}
 
@@ -179,7 +185,7 @@ var (
 		AppRequestFailedOp:              AppResponseOp,
 		CrossChainAppRequestFailedOp:    CrossChainAppResponseOp,
 	}
-	UnrequestedOps = map[Op]struct{}{
+	UnrequestedOps = set.Set[Op]{
 		GetAcceptedFrontierOp:     {},
 		GetAcceptedOp:             {},
 		GetAncestorsOp:            {},
@@ -207,6 +213,8 @@ func (op Op) String() string {
 		return "version"
 	case PeerListOp:
 		return "peerlist"
+	case PeerListAckOp:
+		return "peerlist_ack"
 	// State sync
 	case GetStateSummaryFrontierOp:
 		return "get_state_summary_frontier"
@@ -273,6 +281,8 @@ func (op Op) String() string {
 		// Internal
 	case ConnectedOp:
 		return "connected"
+	case ConnectedSubnetOp:
+		return "connected_subnet"
 	case DisconnectedOp:
 		return "disconnected"
 	case NotifyOp:
@@ -286,107 +296,111 @@ func (op Op) String() string {
 	}
 }
 
-func Unwrap(m *p2ppb.Message) (interface{}, error) {
+func Unwrap(m *p2p.Message) (interface{}, error) {
 	switch msg := m.GetMessage().(type) {
 	// Handshake:
-	case *p2ppb.Message_Ping:
+	case *p2p.Message_Ping:
 		return msg.Ping, nil
-	case *p2ppb.Message_Pong:
+	case *p2p.Message_Pong:
 		return msg.Pong, nil
-	case *p2ppb.Message_Version:
+	case *p2p.Message_Version:
 		return msg.Version, nil
-	case *p2ppb.Message_PeerList:
+	case *p2p.Message_PeerList:
 		return msg.PeerList, nil
+	case *p2p.Message_PeerListAck:
+		return msg.PeerListAck, nil
 	// State sync:
-	case *p2ppb.Message_GetStateSummaryFrontier:
+	case *p2p.Message_GetStateSummaryFrontier:
 		return msg.GetStateSummaryFrontier, nil
-	case *p2ppb.Message_StateSummaryFrontier_:
+	case *p2p.Message_StateSummaryFrontier_:
 		return msg.StateSummaryFrontier_, nil
-	case *p2ppb.Message_GetAcceptedStateSummary:
+	case *p2p.Message_GetAcceptedStateSummary:
 		return msg.GetAcceptedStateSummary, nil
-	case *p2ppb.Message_AcceptedStateSummary_:
+	case *p2p.Message_AcceptedStateSummary_:
 		return msg.AcceptedStateSummary_, nil
 	// Bootstrapping:
-	case *p2ppb.Message_GetAcceptedFrontier:
+	case *p2p.Message_GetAcceptedFrontier:
 		return msg.GetAcceptedFrontier, nil
-	case *p2ppb.Message_AcceptedFrontier_:
+	case *p2p.Message_AcceptedFrontier_:
 		return msg.AcceptedFrontier_, nil
-	case *p2ppb.Message_GetAccepted:
+	case *p2p.Message_GetAccepted:
 		return msg.GetAccepted, nil
-	case *p2ppb.Message_Accepted_:
+	case *p2p.Message_Accepted_:
 		return msg.Accepted_, nil
-	case *p2ppb.Message_GetAncestors:
+	case *p2p.Message_GetAncestors:
 		return msg.GetAncestors, nil
-	case *p2ppb.Message_Ancestors_:
+	case *p2p.Message_Ancestors_:
 		return msg.Ancestors_, nil
 	// Consensus:
-	case *p2ppb.Message_Get:
+	case *p2p.Message_Get:
 		return msg.Get, nil
-	case *p2ppb.Message_Put:
+	case *p2p.Message_Put:
 		return msg.Put, nil
-	case *p2ppb.Message_PushQuery:
+	case *p2p.Message_PushQuery:
 		return msg.PushQuery, nil
-	case *p2ppb.Message_PullQuery:
+	case *p2p.Message_PullQuery:
 		return msg.PullQuery, nil
-	case *p2ppb.Message_Chits:
+	case *p2p.Message_Chits:
 		return msg.Chits, nil
 	// Application:
-	case *p2ppb.Message_AppRequest:
+	case *p2p.Message_AppRequest:
 		return msg.AppRequest, nil
-	case *p2ppb.Message_AppResponse:
+	case *p2p.Message_AppResponse:
 		return msg.AppResponse, nil
-	case *p2ppb.Message_AppGossip:
+	case *p2p.Message_AppGossip:
 		return msg.AppGossip, nil
 	default:
 		return nil, fmt.Errorf("%w: %T", errUnknownMessageType, msg)
 	}
 }
 
-func ToOp(m *p2ppb.Message) (Op, error) {
+func ToOp(m *p2p.Message) (Op, error) {
 	switch msg := m.GetMessage().(type) {
-	case *p2ppb.Message_Ping:
+	case *p2p.Message_Ping:
 		return PingOp, nil
-	case *p2ppb.Message_Pong:
+	case *p2p.Message_Pong:
 		return PongOp, nil
-	case *p2ppb.Message_Version:
+	case *p2p.Message_Version:
 		return VersionOp, nil
-	case *p2ppb.Message_PeerList:
+	case *p2p.Message_PeerList:
 		return PeerListOp, nil
-	case *p2ppb.Message_GetStateSummaryFrontier:
+	case *p2p.Message_PeerListAck:
+		return PeerListAckOp, nil
+	case *p2p.Message_GetStateSummaryFrontier:
 		return GetStateSummaryFrontierOp, nil
-	case *p2ppb.Message_StateSummaryFrontier_:
+	case *p2p.Message_StateSummaryFrontier_:
 		return StateSummaryFrontierOp, nil
-	case *p2ppb.Message_GetAcceptedStateSummary:
+	case *p2p.Message_GetAcceptedStateSummary:
 		return GetAcceptedStateSummaryOp, nil
-	case *p2ppb.Message_AcceptedStateSummary_:
+	case *p2p.Message_AcceptedStateSummary_:
 		return AcceptedStateSummaryOp, nil
-	case *p2ppb.Message_GetAcceptedFrontier:
+	case *p2p.Message_GetAcceptedFrontier:
 		return GetAcceptedFrontierOp, nil
-	case *p2ppb.Message_AcceptedFrontier_:
+	case *p2p.Message_AcceptedFrontier_:
 		return AcceptedFrontierOp, nil
-	case *p2ppb.Message_GetAccepted:
+	case *p2p.Message_GetAccepted:
 		return GetAcceptedOp, nil
-	case *p2ppb.Message_Accepted_:
+	case *p2p.Message_Accepted_:
 		return AcceptedOp, nil
-	case *p2ppb.Message_GetAncestors:
+	case *p2p.Message_GetAncestors:
 		return GetAncestorsOp, nil
-	case *p2ppb.Message_Ancestors_:
+	case *p2p.Message_Ancestors_:
 		return AncestorsOp, nil
-	case *p2ppb.Message_Get:
+	case *p2p.Message_Get:
 		return GetOp, nil
-	case *p2ppb.Message_Put:
+	case *p2p.Message_Put:
 		return PutOp, nil
-	case *p2ppb.Message_PushQuery:
+	case *p2p.Message_PushQuery:
 		return PushQueryOp, nil
-	case *p2ppb.Message_PullQuery:
+	case *p2p.Message_PullQuery:
 		return PullQueryOp, nil
-	case *p2ppb.Message_Chits:
+	case *p2p.Message_Chits:
 		return ChitsOp, nil
-	case *p2ppb.Message_AppRequest:
+	case *p2p.Message_AppRequest:
 		return AppRequestOp, nil
-	case *p2ppb.Message_AppResponse:
+	case *p2p.Message_AppResponse:
 		return AppResponseOp, nil
-	case *p2ppb.Message_AppGossip:
+	case *p2p.Message_AppGossip:
 		return AppGossipOp, nil
 	default:
 		return 0, fmt.Errorf("%w: %T", errUnknownMessageType, msg)

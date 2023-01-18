@@ -8,8 +8,7 @@ import (
 	"fmt"
 
 	"github.com/ava-labs/avalanchego/ids"
-
-	ledger "github.com/ava-labs/avalanche-ledger-go"
+	"github.com/ava-labs/avalanchego/utils/set"
 )
 
 var (
@@ -36,27 +35,27 @@ type Keychain interface {
 	Get(addr ids.ShortID) (Signer, bool)
 	// Returns the set of addresses for which the accessor keeps an associated
 	// signer
-	Addresses() ids.ShortSet
+	Addresses() set.Set[ids.ShortID]
 }
 
 // ledgerKeychain is an abstraction of the underlying ledger hardware device,
 // to be able to get a signer from a finite set of derived signers
 type ledgerKeychain struct {
-	ledger    ledger.Ledger
-	addrs     ids.ShortSet
+	ledger    Ledger
+	addrs     set.Set[ids.ShortID]
 	addrToIdx map[ids.ShortID]uint32
 }
 
 // ledgerSigner is an abstraction of the underlying ledger hardware device,
 // to be able sign for a specific address
 type ledgerSigner struct {
-	ledger ledger.Ledger
+	ledger Ledger
 	idx    uint32
 	addr   ids.ShortID
 }
 
 // NewLedgerKeychain creates a new Ledger with [numToDerive] addresses.
-func NewLedgerKeychain(l ledger.Ledger, numToDerive int) (Keychain, error) {
+func NewLedgerKeychain(l Ledger, numToDerive int) (Keychain, error) {
 	if numToDerive < 1 {
 		return nil, ErrInvalidNumAddrsToDerive
 	}
@@ -70,7 +69,7 @@ func NewLedgerKeychain(l ledger.Ledger, numToDerive int) (Keychain, error) {
 }
 
 // NewLedgerKeychainFromIndices creates a new Ledger with addresses taken from the given [indices].
-func NewLedgerKeychainFromIndices(l ledger.Ledger, indices []uint32) (Keychain, error) {
+func NewLedgerKeychainFromIndices(l Ledger, indices []uint32) (Keychain, error) {
 	if len(indices) == 0 {
 		return nil, ErrInvalidIndicesLength
 	}
@@ -89,7 +88,7 @@ func NewLedgerKeychainFromIndices(l ledger.Ledger, indices []uint32) (Keychain, 
 		)
 	}
 
-	addrsSet := ids.ShortSet{}
+	addrsSet := set.NewSet[ids.ShortID](len(addrs))
 	addrsSet.Add(addrs...)
 
 	addrToIdx := map[ids.ShortID]uint32{}
@@ -104,7 +103,7 @@ func NewLedgerKeychainFromIndices(l ledger.Ledger, indices []uint32) (Keychain, 
 	}, nil
 }
 
-func (l *ledgerKeychain) Addresses() ids.ShortSet {
+func (l *ledgerKeychain) Addresses() set.Set[ids.ShortID] {
 	return l.addrs
 }
 

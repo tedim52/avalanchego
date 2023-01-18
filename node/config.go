@@ -23,6 +23,7 @@ import (
 	"github.com/ava-labs/avalanchego/utils/ips"
 	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/avalanchego/utils/profiler"
+	"github.com/ava-labs/avalanchego/utils/set"
 	"github.com/ava-labs/avalanchego/utils/timer"
 	"github.com/ava-labs/avalanchego/vms"
 )
@@ -160,16 +161,12 @@ type Config struct {
 
 	AdaptiveTimeoutConfig timer.AdaptiveTimeoutConfig `json:"adaptiveTimeoutConfig"`
 
-	// Benchlist Configuration
 	BenchlistConfig benchlist.Config `json:"benchlistConfig"`
 
-	// Profiling configurations
 	ProfilerConfig profiler.Config `json:"profilerConfig"`
 
-	// Logging configuration
 	LoggingConfig logging.Config `json:"loggingConfig"`
 
-	// Plugin directory
 	PluginDir string `json:"pluginDir"`
 
 	// File Descriptor Limit
@@ -188,17 +185,13 @@ type Config struct {
 	// Gossip a container in the accepted frontier every [ConsensusGossipFrequency]
 	ConsensusGossipFrequency time.Duration `json:"consensusGossipFreq"`
 
-	// Subnet Whitelist
-	WhitelistedSubnets ids.Set `json:"whitelistedSubnets"`
+	TrackedSubnets set.Set[ids.ID] `json:"trackedSubnets"`
 
-	// SubnetConfigs
 	SubnetConfigs map[ids.ID]chains.SubnetConfig `json:"subnetConfigs"`
 
-	// ChainConfigs
 	ChainConfigs map[string]chains.ChainConfig `json:"-"`
 	ChainAliases map[ids.ID][]string           `json:"chainAliases"`
 
-	// VM management
 	VMManager vms.Manager `json:"-"`
 
 	// Halflife to use for the processing requests tracker.
@@ -235,4 +228,8 @@ type Config struct {
 
 	// ProvidedFlags contains all the flags set by the user
 	ProvidedFlags map[string]interface{} `json:"-"`
+
+	// ChainDataDir is the root path for per-chain directories where VMs can
+	// write arbitrary data.
+	ChainDataDir string `json:"chainDataDir"`
 }

@@ -17,6 +17,8 @@ import (
 
 	"github.com/NYTimes/gziphandler"
 
+	"github.com/prometheus/client_golang/prometheus"
+
 	"github.com/rs/cors"
 
 	"go.uber.org/zap"
@@ -65,18 +67,6 @@ type PathAdderWithReadLock interface {
 type Server interface {
 	PathAdder
 	PathAdderWithReadLock
-	// Initialize creates the API server at the provided host and port
-	Initialize(log logging.Logger,
-		factory logging.Factory,
-		host string,
-		port uint16,
-		allowedOrigins []string,
-		shutdownTimeout time.Duration,
-		nodeID ids.NodeID,
-		tracingEnabled bool,
-		tracer trace.Tracer,
-		wrappers ...Wrapper,
-	)
 	// Dispatch starts the API server
 	Dispatch() error
 	// DispatchTLS starts the API server with the provided TLS certificate
@@ -98,8 +88,6 @@ type server struct {
 	log logging.Logger
 	// generates new logs for chains to write to
 	factory logging.Factory
-	// points the the router handlers
-	handler http.Handler
 	// Listens for HTTP traffic on this address
 	listenHost string
 	listenPort uint16
@@ -109,6 +97,8 @@ type server struct {
 	tracingEnabled bool
 	tracer         trace.Tracer
 
+	metrics *metrics
+
 	// Maps endpoints to handlers
 	router *router
 
@@ -116,11 +106,7 @@ type server struct {
 }
 
 // New returns an instance of a Server.
-func New() Server {
-	return &server{}
-}
-
-func (s *server) Initialize(
+func New(
 	log logging.Logger,
 	factory logging.Factory,
 	host string,
@@ -130,27 +116,22 @@ func (s *server) Initialize(
 	nodeID ids.NodeID,
 	tracingEnabled bool,
 	tracer trace.Tracer,
+	namespace string,
+	registerer prometheus.Registerer,
 	wrappers ...Wrapper,
-) {
-	s.log = log
-	s.factory = factory
-	s.listenHost = host
-	s.listenPort = port
-	s.shutdownTimeout = shutdownTimeout
-	s.tracingEnabled = tracingEnabled
-	s.tracer = tracer
-	s.router = newRouter()
+) (Server, error) {
+	m, err := newMetrics(namespace, registerer)
+	if err != nil {
+		return nil, err
+	}
 
-	s.log.Info("API created",
-		zap.Strings("allowedOrigins", allowedOrigins),
-	)
-
+	router := newRouter()
 	corsHandler := cors.New(cors.Options{
 		AllowedOrigins:   allowedOrigins,
 		AllowCredentials: true,
-	}).Handler(s.router)
+	}).Handler(router)
 	gzipHandler := gziphandler.GzipHandler(corsHandler)
-	s.handler = http.HandlerFunc(
+	var handler http.Handler = http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
 			// Attach this node's ID as a header
 			w.Header().Set("node-id", nodeID.String())
@@ -159,8 +140,28 @@ func (s *server) Initialize(
 	)
 
 	for _, wrapper := range wrappers {
-		s.handler = wrapper.WrapHandler(s.handler)
+		handler = wrapper.WrapHandler(handler)
 	}
+
+	log.Info("API created",
+		zap.Strings("allowedOrigins", allowedOrigins),
+	)
+
+	return &server{
+		log:             log,
+		factory:         factory,
+		listenHost:      host,
+		listenPort:      port,
+		shutdownTimeout: shutdownTimeout,
+		tracingEnabled:  tracingEnabled,
+		tracer:          tracer,
+		metrics:         m,
+		router:          router,
+		srv: &http.Server{
+			Handler:           handler,
+			ReadHeaderTimeout: readHeaderTimeout,
+		},
+	}, nil
 }
 
 func (s *server) Dispatch() error {
@@ -182,10 +183,6 @@ func (s *server) Dispatch() error {
 		)
 	}
 
-	s.srv = &http.Server{
-		Handler:           s.handler,
-		ReadHeaderTimeout: readHeaderTimeout,
-	}
 	return s.srv.Serve(listener)
 }
 
@@ -217,11 +214,6 @@ func (s *server) DispatchTLS(certBytes, keyBytes []byte) error {
 		)
 	}
 
-	s.srv = &http.Server{
-		Addr:              listenAddress,
-		Handler:           s.handler,
-		ReadHeaderTimeout: readHeaderTimeout,
-	}
 	return s.srv.Serve(listener)
 }
 
@@ -298,6 +290,7 @@ func (s *server) addChainRoute(chainName string, handler *common.HTTPHandler, ct
 	}
 	// Apply middleware to reject calls to the handler before the chain finishes bootstrapping
 	h = rejectMiddleware(h, ctx)
+	h = s.metrics.wrapHandler(chainName, h)
 	return s.router.AddRouter(url, endpoint, h)
 }
 
@@ -336,6 +329,7 @@ func (s *server) addRoute(handler *common.HTTPHandler, lock *sync.RWMutex, base,
 	if err != nil {
 		return err
 	}
+	h = s.metrics.wrapHandler(base, h)
 	return s.router.AddRouter(url, endpoint, h)
 }
 
@@ -413,10 +407,6 @@ func (s *server) AddAliasesWithReadLock(endpoint string, aliases ...string) erro
 }
 
 func (s *server) Shutdown() error {
-	if s.srv == nil {
-		return nil
-	}
-
 	ctx, cancel := context.WithTimeout(context.Background(), s.shutdownTimeout)
 	err := s.srv.Shutdown(ctx)
 	cancel()

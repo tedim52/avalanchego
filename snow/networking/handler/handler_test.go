@@ -6,8 +6,11 @@ package handler
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/golang/mock/gomock"
 
 	"github.com/prometheus/client_golang/prometheus"
 
@@ -15,6 +18,7 @@ import (
 
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/message"
+	"github.com/ava-labs/avalanchego/proto/pb/p2p"
 	"github.com/ava-labs/avalanchego/snow"
 	"github.com/ava-labs/avalanchego/snow/engine/common"
 	"github.com/ava-labs/avalanchego/snow/networking/tracker"
@@ -23,6 +27,8 @@ import (
 	"github.com/ava-labs/avalanchego/utils/resource"
 )
 
+var errFatal = errors.New("error should cause handler to close")
+
 func TestHandlerDropsTimedOutMessages(t *testing.T) {
 	called := make(chan struct{})
 
@@ -30,7 +36,7 @@ func TestHandlerDropsTimedOutMessages(t *testing.T) {
 
 	vdrs := validators.NewSet()
 	vdr0 := ids.GenerateTestNodeID()
-	err := vdrs.AddWeight(vdr0, 1)
+	err := vdrs.Add(vdr0, nil, ids.Empty, 1)
 	require.NoError(t, err)
 
 	resourceTracker, err := tracker.NewResourceTracker(
@@ -46,7 +52,9 @@ func TestHandlerDropsTimedOutMessages(t *testing.T) {
 		nil,
 		nil,
 		time.Second,
+		p2p.EngineType_ENGINE_TYPE_SNOWMAN,
 		resourceTracker,
+		validators.UnhandledSubnetConnector,
 	)
 	require.NoError(t, err)
 	handler := handlerIntf.(*handler)
@@ -80,14 +88,14 @@ func TestHandlerDropsTimedOutMessages(t *testing.T) {
 	nodeID := ids.EmptyNodeID
 	reqID := uint32(1)
 	chainID := ids.ID{}
-	msg := message.InboundGetAcceptedFrontier(chainID, reqID, 0*time.Second, nodeID)
+	msg := message.InboundGetAcceptedFrontier(chainID, reqID, 0*time.Second, nodeID, p2p.EngineType_ENGINE_TYPE_SNOWMAN)
 	handler.Push(context.Background(), msg)
 
 	currentTime := time.Now().Add(time.Second)
 	handler.clock.Set(currentTime)
 
 	reqID++
-	msg = message.InboundGetAccepted(chainID, reqID, 1*time.Second, nil, nodeID)
+	msg = message.InboundGetAccepted(chainID, reqID, 1*time.Second, nil, nodeID, p2p.EngineType_ENGINE_TYPE_SNOWMAN)
 	handler.Push(context.Background(), msg)
 
 	bootstrapper.StartF = func(context.Context, uint32) error {
@@ -110,7 +118,7 @@ func TestHandlerClosesOnError(t *testing.T) {
 	ctx := snow.DefaultConsensusContextTest()
 
 	vdrs := validators.NewSet()
-	err := vdrs.AddWeight(ids.GenerateTestNodeID(), 1)
+	err := vdrs.Add(ids.GenerateTestNodeID(), nil, ids.Empty, 1)
 	require.NoError(t, err)
 
 	resourceTracker, err := tracker.NewResourceTracker(
@@ -126,7 +134,9 @@ func TestHandlerClosesOnError(t *testing.T) {
 		nil,
 		nil,
 		time.Second,
+		p2p.EngineType_ENGINE_TYPE_SNOWMAN,
 		resourceTracker,
+		validators.UnhandledSubnetConnector,
 	)
 	require.NoError(t, err)
 	handler := handlerIntf.(*handler)
@@ -149,7 +159,7 @@ func TestHandlerClosesOnError(t *testing.T) {
 		return ctx
 	}
 	bootstrapper.GetAcceptedFrontierF = func(ctx context.Context, nodeID ids.NodeID, requestID uint32) error {
-		return errors.New("Engine error should cause handler to close")
+		return errFatal
 	}
 	handler.SetBootstrapper(bootstrapper)
 
@@ -173,7 +183,7 @@ func TestHandlerClosesOnError(t *testing.T) {
 	nodeID := ids.EmptyNodeID
 	reqID := uint32(1)
 	deadline := time.Nanosecond
-	msg := message.InboundGetAcceptedFrontier(ids.ID{}, reqID, deadline, nodeID)
+	msg := message.InboundGetAcceptedFrontier(ids.ID{}, reqID, deadline, nodeID, 0)
 	handler.Push(context.Background(), msg)
 
 	ticker := time.NewTicker(time.Second)
@@ -188,7 +198,7 @@ func TestHandlerDropsGossipDuringBootstrapping(t *testing.T) {
 	closed := make(chan struct{}, 1)
 	ctx := snow.DefaultConsensusContextTest()
 	vdrs := validators.NewSet()
-	err := vdrs.AddWeight(ids.GenerateTestNodeID(), 1)
+	err := vdrs.Add(ids.GenerateTestNodeID(), nil, ids.Empty, 1)
 	require.NoError(t, err)
 
 	resourceTracker, err := tracker.NewResourceTracker(
@@ -204,7 +214,9 @@ func TestHandlerDropsGossipDuringBootstrapping(t *testing.T) {
 		nil,
 		nil,
 		1,
+		p2p.EngineType_ENGINE_TYPE_SNOWMAN,
 		resourceTracker,
+		validators.UnhandledSubnetConnector,
 	)
 	require.NoError(t, err)
 	handler := handlerIntf.(*handler)
@@ -239,7 +251,7 @@ func TestHandlerDropsGossipDuringBootstrapping(t *testing.T) {
 	nodeID := ids.EmptyNodeID
 	chainID := ids.Empty
 	reqID := uint32(1)
-	inMsg := message.InternalGetFailed(nodeID, chainID, reqID)
+	inMsg := message.InternalGetFailed(nodeID, chainID, reqID, p2p.EngineType_ENGINE_TYPE_SNOWMAN)
 	handler.Push(context.Background(), inMsg)
 
 	ticker := time.NewTicker(time.Second)
@@ -256,7 +268,7 @@ func TestHandlerDispatchInternal(t *testing.T) {
 	ctx := snow.DefaultConsensusContextTest()
 	msgFromVMChan := make(chan common.Message)
 	vdrs := validators.NewSet()
-	err := vdrs.AddWeight(ids.GenerateTestNodeID(), 1)
+	err := vdrs.Add(ids.GenerateTestNodeID(), nil, ids.Empty, 1)
 	require.NoError(t, err)
 
 	resourceTracker, err := tracker.NewResourceTracker(
@@ -272,7 +284,9 @@ func TestHandlerDispatchInternal(t *testing.T) {
 		msgFromVMChan,
 		nil,
 		time.Second,
+		p2p.EngineType_ENGINE_TYPE_SNOWMAN,
 		resourceTracker,
+		validators.UnhandledSubnetConnector,
 	)
 	require.NoError(t, err)
 
@@ -311,4 +325,75 @@ func TestHandlerDispatchInternal(t *testing.T) {
 		t.Fatalf("should have called notify")
 	case <-calledNotify:
 	}
+}
+
+func TestHandlerSubnetConnector(t *testing.T) {
+	ctx := snow.DefaultConsensusContextTest()
+	vdrs := validators.NewSet()
+	err := vdrs.Add(ids.GenerateTestNodeID(), nil, ids.Empty, 1)
+	require.NoError(t, err)
+
+	resourceTracker, err := tracker.NewResourceTracker(
+		prometheus.NewRegistry(),
+		resource.NoUsage,
+		meter.ContinuousFactory{},
+		time.Second,
+	)
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	connector := validators.NewMockSubnetConnector(ctrl)
+
+	nodeID := ids.GenerateTestNodeID()
+	subnetID := ids.GenerateTestID()
+
+	require.NoError(t, err)
+	handler, err := New(
+		ctx,
+		vdrs,
+		nil,
+		nil,
+		time.Second,
+		p2p.EngineType_ENGINE_TYPE_SNOWMAN,
+		resourceTracker,
+		connector,
+	)
+	require.NoError(t, err)
+
+	bootstrapper := &common.BootstrapperTest{
+		BootstrapableTest: common.BootstrapableTest{
+			T: t,
+		},
+		EngineTest: common.EngineTest{
+			T: t,
+		},
+	}
+	bootstrapper.Default(false)
+	handler.SetBootstrapper(bootstrapper)
+
+	engine := &common.EngineTest{T: t}
+	engine.Default(false)
+	engine.ContextF = func() *snow.ConsensusContext {
+		return ctx
+	}
+	handler.SetConsensus(engine)
+	ctx.SetState(snow.NormalOp) // assumed bootstrapping is done
+
+	bootstrapper.StartF = func(context.Context, uint32) error {
+		return nil
+	}
+
+	handler.Start(context.Background(), false)
+
+	// Handler should call subnet connector when ConnectedSubnet message is received
+	var wg sync.WaitGroup
+	connector.EXPECT().ConnectedSubnet(gomock.Any(), nodeID, subnetID).Do(
+		func(context.Context, ids.NodeID, ids.ID) {
+			wg.Done()
+		})
+
+	wg.Add(1)
+	defer wg.Wait()
+
+	subnetMsg := message.InternalConnectedSubnet(nodeID, subnetID)
+	handler.Push(context.Background(), subnetMsg)
 }
