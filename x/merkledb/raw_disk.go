@@ -8,14 +8,17 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
-
 	"github.com/ava-labs/avalanchego/utils/maybe"
 	"github.com/ava-labs/avalanchego/utils/perms"
+	"os"
+	"path/filepath"
 )
 
-const fileName = "merkle.db"
+const (
+	diskAddressSize          = 16
+	fileName                 = "merkle.db"
+	rootKeyDiskAddressOffset = 1
+)
 
 // [offset:offset+size]
 type diskAddress struct {
@@ -41,11 +44,11 @@ func (r *diskAddress) decode(diskAddressBytes []byte) {
 
 type diskBranchNode struct {
 	value    maybe.Maybe[[]byte]
-	children map[byte]diskChild
+	children map[byte]*diskChild
 }
 
 type diskChild struct {
-	child
+	child   child
 	address diskAddress
 }
 
@@ -99,7 +102,12 @@ func (r *rawDisk) closeWithRoot(root maybe.Maybe[*node]) error {
 }
 
 func (r *rawDisk) getRootKey() ([]byte, error) {
-	return nil, errors.New("not implemented")
+	rootKeyBytes := make([]byte, 16)
+	_, err := r.file.ReadAt(rootKeyBytes, rootKeyDiskAddressOffset)
+	if err != nil {
+		return nil, err
+	}
+	return rootKeyBytes, nil
 }
 
 func (r *rawDisk) writeChanges(ctx context.Context, changes *changeSummary) error {
@@ -112,6 +120,23 @@ func (r *rawDisk) Clear() error {
 
 func (r *rawDisk) getNode(key Key, hasValue bool) (*node, error) {
 	return nil, errors.New("not implemented")
+}
+
+func (r *rawDisk) readNodeFromDisk(address *diskAddress) (*diskBranchNode, error) {
+	bytes := make([]byte, int(address.size))
+
+	_, err := r.file.ReadAt(bytes, address.offset)
+	if err != nil {
+		return nil, err
+	}
+
+	dbn := &diskBranchNode{}
+	err = decodeDiskBranchNode(bytes, dbn)
+	if err != nil {
+		return nil, err
+	}
+
+	return dbn, nil
 }
 
 func (r *rawDisk) cacheSize() int {
