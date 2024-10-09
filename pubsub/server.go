@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2024, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package pubsub
@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-
 	"go.uber.org/zap"
 
 	"github.com/ava-labs/avalanchego/utils/logging"
@@ -68,6 +67,7 @@ type Server struct {
 	subscribedConnections *connections
 }
 
+// Deprecated: The pubsub server is deprecated.
 func New(log logging.Logger) *Server {
 	return &Server{
 		log:                   log,

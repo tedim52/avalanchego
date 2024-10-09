@@ -1,12 +1,9 @@
-// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2024, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package txs
 
 import (
-	"errors"
-
-	"github.com/ava-labs/avalanchego/codec"
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/snow"
 	"github.com/ava-labs/avalanchego/utils/set"
@@ -15,10 +12,6 @@ import (
 )
 
 var (
-	errOperationsNotSortedUnique = errors.New("operations not sorted and unique")
-	errNoOperations              = errors.New("an operationTx must have at least one operation")
-	errDoubleSpend               = errors.New("inputs attempt to double spend an input")
-
 	_ UnsignedTx             = (*OperationTx)(nil)
 	_ secp256k1fx.UnsignedTx = (*OperationTx)(nil)
 )
@@ -51,72 +44,19 @@ func (t *OperationTx) InputUTXOs() []*avax.UTXOID {
 	return utxos
 }
 
-// ConsumedAssetIDs returns the IDs of the assets this transaction consumes
-func (t *OperationTx) ConsumedAssetIDs() set.Set[ids.ID] {
-	assets := t.AssetIDs()
+func (t *OperationTx) InputIDs() set.Set[ids.ID] {
+	inputs := t.BaseTx.InputIDs()
 	for _, op := range t.Ops {
-		if len(op.UTXOIDs) > 0 {
-			assets.Add(op.AssetID())
+		for _, utxo := range op.UTXOIDs {
+			inputs.Add(utxo.InputID())
 		}
 	}
-	return assets
-}
-
-// AssetIDs returns the IDs of the assets this transaction depends on
-func (t *OperationTx) AssetIDs() set.Set[ids.ID] {
-	assets := t.BaseTx.AssetIDs()
-	for _, op := range t.Ops {
-		assets.Add(op.AssetID())
-	}
-	return assets
+	return inputs
 }
 
 // NumCredentials returns the number of expected credentials
 func (t *OperationTx) NumCredentials() int {
 	return t.BaseTx.NumCredentials() + len(t.Ops)
-}
-
-// SyntacticVerify that this transaction is well-formed.
-func (t *OperationTx) SyntacticVerify(
-	ctx *snow.Context,
-	c codec.Manager,
-	txFeeAssetID ids.ID,
-	txFee uint64,
-	_ uint64,
-	numFxs int,
-) error {
-	switch {
-	case t == nil:
-		return errNilTx
-	case len(t.Ops) == 0:
-		return errNoOperations
-	}
-
-	if err := t.BaseTx.SyntacticVerify(ctx, c, txFeeAssetID, txFee, txFee, numFxs); err != nil {
-		return err
-	}
-
-	inputs := set.NewSet[ids.ID](len(t.Ins))
-	for _, in := range t.Ins {
-		inputs.Add(in.InputID())
-	}
-
-	for _, op := range t.Ops {
-		if err := op.Verify(); err != nil {
-			return err
-		}
-		for _, utxoID := range op.UTXOIDs {
-			inputID := utxoID.InputID()
-			if inputs.Contains(inputID) {
-				return errDoubleSpend
-			}
-			inputs.Add(inputID)
-		}
-	}
-	if !IsSortedAndUniqueOperations(t.Ops, c) {
-		return errOperationsNotSortedUnique
-	}
-	return nil
 }
 
 func (t *OperationTx) Visit(v Visitor) error {

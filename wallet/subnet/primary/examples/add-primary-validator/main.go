@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2024, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package main
@@ -13,7 +13,7 @@ import (
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/utils/units"
 	"github.com/ava-labs/avalanchego/vms/platformvm/reward"
-	"github.com/ava-labs/avalanchego/vms/platformvm/validator"
+	"github.com/ava-labs/avalanchego/vms/platformvm/txs"
 	"github.com/ava-labs/avalanchego/vms/secp256k1fx"
 	"github.com/ava-labs/avalanchego/wallet/subnet/primary"
 )
@@ -39,10 +39,14 @@ func main() {
 	}
 	log.Printf("fetched node ID %s in %s\n", nodeID, time.Since(nodeInfoStartTime))
 
-	// NewWalletFromURI fetches the available UTXOs owned by [kc] on the network
-	// that [uri] is hosting.
+	// MakeWallet fetches the available UTXOs owned by [kc] on the network that
+	// [uri] is hosting.
 	walletSyncStartTime := time.Now()
-	wallet, err := primary.NewWalletFromURI(ctx, uri, kc)
+	wallet, err := primary.MakeWallet(ctx, &primary.WalletConfig{
+		URI:          uri,
+		AVAXKeychain: kc,
+		EthKeychain:  kc,
+	})
 	if err != nil {
 		log.Fatalf("failed to initialize wallet: %s\n", err)
 	}
@@ -50,11 +54,13 @@ func main() {
 
 	// Get the P-chain wallet
 	pWallet := wallet.P()
-	avaxAssetID := pWallet.AVAXAssetID()
+	pBuilder := pWallet.Builder()
+	pContext := pBuilder.Context()
+	avaxAssetID := pContext.AVAXAssetID
 
 	addValidatorStartTime := time.Now()
-	addValidatorTxID, err := pWallet.IssueAddPermissionlessValidatorTx(
-		&validator.SubnetValidator{Validator: validator.Validator{
+	addValidatorTx, err := pWallet.IssueAddPermissionlessValidatorTx(
+		&txs.SubnetValidator{Validator: txs.Validator{
 			NodeID: nodeID,
 			Start:  uint64(startTime.Unix()),
 			End:    uint64(startTime.Add(duration).Unix()),
@@ -75,5 +81,5 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to issue add permissionless validator transaction: %s\n", err)
 	}
-	log.Printf("added new primary network validator %s with %s in %s\n", nodeID, addValidatorTxID, time.Since(addValidatorStartTime))
+	log.Printf("added new primary network validator %s with %s in %s\n", nodeID, addValidatorTx.ID(), time.Since(addValidatorStartTime))
 }

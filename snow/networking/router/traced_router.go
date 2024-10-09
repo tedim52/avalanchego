@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2024, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package router
@@ -8,19 +8,19 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
-
 	"go.opentelemetry.io/otel/attribute"
-
-	oteltrace "go.opentelemetry.io/otel/trace"
 
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/message"
+	"github.com/ava-labs/avalanchego/proto/pb/p2p"
 	"github.com/ava-labs/avalanchego/snow/networking/handler"
 	"github.com/ava-labs/avalanchego/snow/networking/timeout"
 	"github.com/ava-labs/avalanchego/trace"
 	"github.com/ava-labs/avalanchego/utils/logging"
 	"github.com/ava-labs/avalanchego/utils/set"
 	"github.com/ava-labs/avalanchego/version"
+
+	oteltrace "go.opentelemetry.io/otel/trace"
 )
 
 var _ Router = (*tracedRouter)(nil)
@@ -43,12 +43,11 @@ func (r *tracedRouter) Initialize(
 	timeoutManager timeout.Manager,
 	closeTimeout time.Duration,
 	criticalChains set.Set[ids.ID],
-	stakingEnabled bool,
+	sybilProtectionEnabled bool,
 	trackedSubnets set.Set[ids.ID],
 	onFatal func(exitCode int),
 	healthConfig HealthConfig,
-	metricsNamespace string,
-	metricsRegisterer prometheus.Registerer,
+	reg prometheus.Registerer,
 ) error {
 	return r.router.Initialize(
 		nodeID,
@@ -56,44 +55,37 @@ func (r *tracedRouter) Initialize(
 		timeoutManager,
 		closeTimeout,
 		criticalChains,
-		stakingEnabled,
+		sybilProtectionEnabled,
 		trackedSubnets,
 		onFatal,
 		healthConfig,
-		metricsNamespace,
-		metricsRegisterer,
+		reg,
 	)
 }
 
 func (r *tracedRouter) RegisterRequest(
 	ctx context.Context,
 	nodeID ids.NodeID,
-	requestingChainID ids.ID,
-	respondingChainID ids.ID,
+	chainID ids.ID,
 	requestID uint32,
 	op message.Op,
 	failedMsg message.InboundMessage,
+	engineType p2p.EngineType,
 ) {
 	r.router.RegisterRequest(
 		ctx,
 		nodeID,
-		requestingChainID,
-		respondingChainID,
+		chainID,
 		requestID,
 		op,
 		failedMsg,
+		engineType,
 	)
 }
 
 func (r *tracedRouter) HandleInbound(ctx context.Context, msg message.InboundMessage) {
 	m := msg.Message()
-	destinationChainID, err := message.GetChainID(m)
-	if err != nil {
-		r.router.HandleInbound(ctx, msg)
-		return
-	}
-
-	sourceChainID, err := message.GetSourceChainID(m)
+	chainID, err := message.GetChainID(m)
 	if err != nil {
 		r.router.HandleInbound(ctx, msg)
 		return
@@ -102,8 +94,7 @@ func (r *tracedRouter) HandleInbound(ctx context.Context, msg message.InboundMes
 	ctx, span := r.tracer.Start(ctx, "tracedRouter.HandleInbound", oteltrace.WithAttributes(
 		attribute.Stringer("nodeID", msg.NodeID()),
 		attribute.Stringer("messageOp", msg.Op()),
-		attribute.Stringer("chainID", destinationChainID),
-		attribute.Stringer("sourceChainID", sourceChainID),
+		attribute.Stringer("chainID", chainID),
 	))
 	defer span.End()
 

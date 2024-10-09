@@ -1,11 +1,10 @@
-// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2024, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package txs
 
 import (
 	"fmt"
-	"time"
 
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/snow"
@@ -15,18 +14,20 @@ import (
 	"github.com/ava-labs/avalanchego/vms/components/avax"
 	"github.com/ava-labs/avalanchego/vms/components/verify"
 	"github.com/ava-labs/avalanchego/vms/platformvm/fx"
-	"github.com/ava-labs/avalanchego/vms/platformvm/validator"
 	"github.com/ava-labs/avalanchego/vms/secp256k1fx"
 )
 
-var _ DelegatorTx = (*AddPermissionlessDelegatorTx)(nil)
+var (
+	_ DelegatorTx     = (*AddPermissionlessDelegatorTx)(nil)
+	_ ScheduledStaker = (*AddPermissionlessDelegatorTx)(nil)
+)
 
 // AddPermissionlessDelegatorTx is an unsigned addPermissionlessDelegatorTx
 type AddPermissionlessDelegatorTx struct {
 	// Metadata, inputs and outputs
 	BaseTx `serialize:"true"`
 	// Describes the validator
-	Validator validator.Validator `serialize:"true" json:"validator"`
+	Validator `serialize:"true" json:"validator"`
 	// ID of the subnet this validator is validating
 	Subnet ids.ID `serialize:"true" json:"subnetID"`
 	// Where to send staked tokens when done validating
@@ -57,18 +58,6 @@ func (tx *AddPermissionlessDelegatorTx) NodeID() ids.NodeID {
 
 func (*AddPermissionlessDelegatorTx) PublicKey() (*bls.PublicKey, bool, error) {
 	return nil, false, nil
-}
-
-func (tx *AddPermissionlessDelegatorTx) StartTime() time.Time {
-	return tx.Validator.StartTime()
-}
-
-func (tx *AddPermissionlessDelegatorTx) EndTime() time.Time {
-	return tx.Validator.EndTime()
-}
-
-func (tx *AddPermissionlessDelegatorTx) Weight() uint64 {
-	return tx.Validator.Wght
 }
 
 func (tx *AddPermissionlessDelegatorTx) PendingPriority() Priority {
@@ -121,7 +110,7 @@ func (tx *AddPermissionlessDelegatorTx) SyntacticVerify(ctx *snow.Context) error
 	stakedAssetID := firstStakeOutput.AssetID()
 	totalStakeWeight := firstStakeOutput.Output().Amount()
 	for _, out := range tx.StakeOuts[1:] {
-		newWeight, err := math.Add64(totalStakeWeight, out.Output().Amount())
+		newWeight, err := math.Add(totalStakeWeight, out.Output().Amount())
 		if err != nil {
 			return err
 		}
@@ -136,10 +125,10 @@ func (tx *AddPermissionlessDelegatorTx) SyntacticVerify(ctx *snow.Context) error
 	switch {
 	case !avax.IsSortedTransferableOutputs(tx.StakeOuts, Codec):
 		return errOutputsNotSorted
-	case totalStakeWeight != tx.Validator.Wght:
+	case totalStakeWeight != tx.Wght:
 		return fmt.Errorf("%w, delegator weight %d total stake weight %d",
 			errDelegatorWeightMismatch,
-			tx.Validator.Wght,
+			tx.Wght,
 			totalStakeWeight,
 		)
 	}

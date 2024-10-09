@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2024, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package bls
@@ -13,7 +13,7 @@ const PublicKeyLen = blst.BLST_P1_COMPRESS_BYTES
 
 var (
 	ErrNoPublicKeys               = errors.New("no public keys")
-	errFailedPublicKeyDecompress  = errors.New("couldn't decompress public key")
+	ErrFailedPublicKeyDecompress  = errors.New("couldn't decompress public key")
 	errInvalidPublicKey           = errors.New("invalid public key")
 	errFailedPublicKeyAggregation = errors.New("couldn't aggregate public keys")
 )
@@ -23,22 +23,36 @@ type (
 	AggregatePublicKey = blst.P1Aggregate
 )
 
-// PublicKeyToBytes returns the compressed big-endian format of the public key.
-func PublicKeyToBytes(pk *PublicKey) []byte {
+// PublicKeyToCompressedBytes returns the compressed big-endian format of the
+// public key.
+func PublicKeyToCompressedBytes(pk *PublicKey) []byte {
 	return pk.Compress()
 }
 
-// PublicKeyFromBytes parses the compressed big-endian format of the public key
-// into a public key.
-func PublicKeyFromBytes(pkBytes []byte) (*PublicKey, error) {
+// PublicKeyFromCompressedBytes parses the compressed big-endian format of the
+// public key into a public key.
+func PublicKeyFromCompressedBytes(pkBytes []byte) (*PublicKey, error) {
 	pk := new(PublicKey).Uncompress(pkBytes)
 	if pk == nil {
-		return nil, errFailedPublicKeyDecompress
+		return nil, ErrFailedPublicKeyDecompress
 	}
 	if !pk.KeyValidate() {
 		return nil, errInvalidPublicKey
 	}
 	return pk, nil
+}
+
+// PublicKeyToUncompressedBytes returns the uncompressed big-endian format of
+// the public key.
+func PublicKeyToUncompressedBytes(key *PublicKey) []byte {
+	return key.Serialize()
+}
+
+// PublicKeyFromValidUncompressedBytes parses the uncompressed big-endian format
+// of the public key into a public key. It is assumed that the provided bytes
+// are valid.
+func PublicKeyFromValidUncompressedBytes(pkBytes []byte) *PublicKey {
+	return new(PublicKey).Deserialize(pkBytes)
 }
 
 // AggregatePublicKeys aggregates a non-zero number of public keys into a single

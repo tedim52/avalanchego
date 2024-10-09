@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2024, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package gresponsewriter
@@ -8,9 +8,6 @@ import (
 	"errors"
 	"net/http"
 
-	"golang.org/x/exp/maps"
-
-	"google.golang.org/grpc"
 	"google.golang.org/protobuf/types/known/emptypb"
 
 	"github.com/ava-labs/avalanchego/vms/rpcchainvm/ghttp/gconn"
@@ -49,7 +46,7 @@ func (s *Server) Write(
 	req *responsewriterpb.WriteRequest,
 ) (*responsewriterpb.WriteResponse, error) {
 	headers := s.writer.Header()
-	maps.Clear(headers)
+	clear(headers)
 	for _, header := range req.Headers {
 		headers[header.Key] = header.Values
 	}
@@ -68,7 +65,7 @@ func (s *Server) WriteHeader(
 	req *responsewriterpb.WriteHeaderRequest,
 ) (*emptypb.Empty, error) {
 	headers := s.writer.Header()
-	maps.Clear(headers)
+	clear(headers)
 	for _, header := range req.Headers {
 		headers[header.Key] = header.Values
 	}
@@ -99,17 +96,16 @@ func (s *Server) Hijack(context.Context, *emptypb.Empty) (*responsewriterpb.Hija
 	if err != nil {
 		return nil, err
 	}
-	serverAddr := serverListener.Addr().String()
 
+	server := grpcutils.NewServer()
 	closer := grpcutils.ServerCloser{}
-	go grpcutils.Serve(serverListener, func(opts []grpc.ServerOption) *grpc.Server {
-		server := grpcutils.NewDefaultServer(opts)
-		closer.Add(server)
-		connpb.RegisterConnServer(server, gconn.NewServer(conn, &closer))
-		readerpb.RegisterReaderServer(server, greader.NewServer(readWriter))
-		writerpb.RegisterWriterServer(server, gwriter.NewServer(readWriter))
-		return server
-	})
+	closer.Add(server)
+
+	connpb.RegisterConnServer(server, gconn.NewServer(conn, &closer))
+	readerpb.RegisterReaderServer(server, greader.NewServer(readWriter))
+	writerpb.RegisterWriterServer(server, gwriter.NewServer(readWriter))
+
+	go grpcutils.Serve(serverListener, server)
 
 	local := conn.LocalAddr()
 	remote := conn.RemoteAddr()
@@ -119,6 +115,6 @@ func (s *Server) Hijack(context.Context, *emptypb.Empty) (*responsewriterpb.Hija
 		LocalString:   local.String(),
 		RemoteNetwork: remote.Network(),
 		RemoteString:  remote.String(),
-		ServerAddr:    serverAddr,
+		ServerAddr:    serverListener.Addr().String(),
 	}, nil
 }

@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2024, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package ledger
@@ -8,7 +8,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/ava-labs/avalanchego/utils/crypto"
+	"github.com/ava-labs/avalanchego/utils/crypto/secp256k1"
 	"github.com/ava-labs/avalanchego/utils/formatting/address"
 	"github.com/ava-labs/avalanchego/utils/hashing"
 )
@@ -17,8 +17,6 @@ const (
 	chainAlias = "P"
 	hrp        = "fuji"
 )
-
-var factory crypto.FactorySECP256K1R
 
 // TestLedger will be skipped if a ledger is not connected.
 func TestLedger(t *testing.T) {
@@ -66,7 +64,7 @@ func TestLedger(t *testing.T) {
 	for i, addrIndex := range indices {
 		sig := sigs[i]
 
-		pk, err := factory.RecoverHashPublicKey(rawHash, sig)
+		pk, err := secp256k1.RecoverPublicKeyFromHash(rawHash, sig)
 		require.NoError(err)
 		require.Equal(addresses[addrIndex], pk.Address())
 	}

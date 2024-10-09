@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2024, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package leveldb
@@ -9,18 +9,17 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"slices"
 	"sync"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
-
 	"github.com/syndtr/goleveldb/leveldb"
 	"github.com/syndtr/goleveldb/leveldb/errors"
 	"github.com/syndtr/goleveldb/leveldb/filter"
 	"github.com/syndtr/goleveldb/leveldb/iterator"
 	"github.com/syndtr/goleveldb/leveldb/opt"
 	"github.com/syndtr/goleveldb/leveldb/util"
-
 	"go.uber.org/zap"
 
 	"github.com/ava-labs/avalanchego/database"
@@ -67,6 +66,9 @@ var (
 	_ database.Database = (*Database)(nil)
 	_ database.Batch    = (*batch)(nil)
 	_ database.Iterator = (*iter)(nil)
+
+	ErrInvalidConfig = errors.New("invalid config")
+	ErrCouldNotOpen  = errors.New("could not open")
 )
 
 // Database is a persistent key-value store. Apart from basic data storage
@@ -77,7 +79,7 @@ type Database struct {
 	// metrics is only initialized and used when [MetricUpdateFrequency] is >= 0
 	// in the config
 	metrics   metrics
-	closed    utils.AtomicBool
+	closed    utils.Atomic[bool]
 	closeOnce sync.Once
 	// closeCh is closed when Close() is called.
 	closeCh chan struct{}
@@ -184,7 +186,7 @@ type config struct {
 }
 
 // New returns a wrapped LevelDB object.
-func New(file string, configBytes []byte, log logging.Logger, namespace string, reg prometheus.Registerer) (database.Database, error) {
+func New(file string, configBytes []byte, log logging.Logger, reg prometheus.Registerer) (database.Database, error) {
 	parsedConfig := config{
 		BlockCacheCapacity:     DefaultBlockCacheSize,
 		DisableSeeksCompaction: true,
@@ -196,7 +198,7 @@ func New(file string, configBytes []byte, log logging.Logger, namespace string, 
 	}
 	if len(configBytes) > 0 {
 		if err := json.Unmarshal(configBytes, &parsedConfig); err != nil {
-			return nil, fmt.Errorf("failed to parse db config: %w", err)
+			return nil, fmt.Errorf("%w: %w", ErrInvalidConfig, err)
 		}
 	}
 
@@ -226,7 +228,7 @@ func New(file string, configBytes []byte, log logging.Logger, namespace string, 
 		db, err = leveldb.RecoverFile(file, nil)
 	}
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %w", ErrCouldNotOpen, err)
 	}
 
 	wrappedDB := &Database{
@@ -234,7 +236,7 @@ func New(file string, configBytes []byte, log logging.Logger, namespace string, 
 		closeCh: make(chan struct{}),
 	}
 	if parsedConfig.MetricUpdateFrequency > 0 {
-		metrics, err := newMetrics(namespace, reg)
+		metrics, err := newMetrics(reg)
 		if err != nil {
 			// Drop any close error to report the original error
 			_ = db.Close()
@@ -351,7 +353,7 @@ func (db *Database) Compact(start []byte, limit []byte) error {
 }
 
 func (db *Database) Close() error {
-	db.closed.SetValue(true)
+	db.closed.Set(true)
 	db.closeOnce.Do(func() {
 		close(db.closeCh)
 	})
@@ -360,7 +362,7 @@ func (db *Database) Close() error {
 }
 
 func (db *Database) HealthCheck(context.Context) (interface{}, error) {
-	if db.closed.GetValue() {
+	if db.closed.Get() {
 		return nil, database.ErrClosed
 	}
 	return nil, nil
@@ -447,7 +449,7 @@ type iter struct {
 
 func (it *iter) Next() bool {
 	// Short-circuit and set an error if the underlying database has been closed.
-	if it.db.closed.GetValue() {
+	if it.db.closed.Get() {
 		it.key = nil
 		it.val = nil
 		it.err = database.ErrClosed
@@ -456,8 +458,8 @@ func (it *iter) Next() bool {
 
 	hasNext := it.Iterator.Next()
 	if hasNext {
-		it.key = utils.CopyBytes(it.Iterator.Key())
-		it.val = utils.CopyBytes(it.Iterator.Value())
+		it.key = slices.Clone(it.Iterator.Key())
+		it.val = slices.Clone(it.Iterator.Value())
 	} else {
 		it.key = nil
 		it.val = nil

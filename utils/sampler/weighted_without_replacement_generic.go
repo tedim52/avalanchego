@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2024, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package sampler
@@ -15,39 +15,30 @@ type weightedWithoutReplacementGeneric struct {
 func (s *weightedWithoutReplacementGeneric) Initialize(weights []uint64) error {
 	totalWeight := uint64(0)
 	for _, weight := range weights {
-		newWeight, err := safemath.Add64(totalWeight, weight)
+		newWeight, err := safemath.Add(totalWeight, weight)
 		if err != nil {
 			return err
 		}
 		totalWeight = newWeight
 	}
-	if err := s.u.Initialize(totalWeight); err != nil {
-		return err
-	}
+	s.u.Initialize(totalWeight)
 	return s.w.Initialize(weights)
 }
 
-func (s *weightedWithoutReplacementGeneric) Sample(count int) ([]int, error) {
+func (s *weightedWithoutReplacementGeneric) Sample(count int) ([]int, bool) {
 	s.u.Reset()
 
 	indices := make([]int, count)
 	for i := 0; i < count; i++ {
-		weight, err := s.u.Next()
-		if err != nil {
-			return nil, err
+		weight, ok := s.u.Next()
+		if !ok {
+			return nil, false
 		}
-		indices[i], err = s.w.Sample(weight)
-		if err != nil {
-			return nil, err
+
+		indices[i], ok = s.w.Sample(weight)
+		if !ok {
+			return nil, false
 		}
 	}
-	return indices, nil
-}
-
-func (s *weightedWithoutReplacementGeneric) Seed(seed int64) {
-	s.u.Seed(seed)
-}
-
-func (s *weightedWithoutReplacementGeneric) ClearSeed() {
-	s.u.ClearSeed()
+	return indices, true
 }

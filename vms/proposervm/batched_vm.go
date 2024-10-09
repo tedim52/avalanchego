@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2024, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package proposervm
@@ -7,9 +7,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/ava-labs/avalanchego/database"
 	"github.com/ava-labs/avalanchego/ids"
-	"github.com/ava-labs/avalanchego/snow/choices"
 	"github.com/ava-labs/avalanchego/snow/consensus/snowman"
 	"github.com/ava-labs/avalanchego/snow/engine/snowman/block"
 	"github.com/ava-labs/avalanchego/utils/wrappers"
@@ -24,7 +22,7 @@ func (vm *VM) GetAncestors(
 	blkID ids.ID,
 	maxBlocksNum int,
 	maxBlocksSize int,
-	maxBlocksRetrivalTime time.Duration,
+	maxBlocksRetrievalTime time.Duration,
 ) ([][]byte, error) {
 	if vm.batchedVM == nil {
 		return nil, block.ErrRemoteVMNotImplemented
@@ -50,15 +48,13 @@ func (vm *VM) GetAncestors(
 		// is repr. by an int.
 		currentByteLength += wrappers.IntLen + len(blkBytes)
 		elapsedTime := vm.Clock.Time().Sub(startTime)
-		if len(res) > 0 && (currentByteLength >= maxBlocksSize || maxBlocksRetrivalTime <= elapsedTime) {
+		if len(res) > 0 && (currentByteLength >= maxBlocksSize || maxBlocksRetrievalTime <= elapsedTime) {
 			return res, nil // reached maximum size or ran out of time
 		}
 
 		res = append(res, blkBytes)
 		blkID = blk.ParentID()
-		maxBlocksNum--
-
-		if maxBlocksNum <= 0 {
+		if len(res) >= maxBlocksNum {
 			return res, nil
 		}
 	}
@@ -66,7 +62,7 @@ func (vm *VM) GetAncestors(
 	// snowman++ fork may have been hit.
 	preMaxBlocksNum := maxBlocksNum - len(res)
 	preMaxBlocksSize := maxBlocksSize - currentByteLength
-	preMaxBlocksRetrivalTime := maxBlocksRetrivalTime - time.Since(startTime)
+	preMaxBlocksRetrivalTime := maxBlocksRetrievalTime - time.Since(startTime)
 	innerBytes, err := vm.batchedVM.GetAncestors(
 		ctx,
 		blkID,
@@ -85,10 +81,6 @@ func (vm *VM) GetAncestors(
 }
 
 func (vm *VM) BatchedParseBlock(ctx context.Context, blks [][]byte) ([]snowman.Block, error) {
-	if vm.batchedVM == nil {
-		return nil, block.ErrRemoteVMNotImplemented
-	}
-
 	type partialData struct {
 		index int
 		block statelessblock.Block
@@ -101,9 +93,11 @@ func (vm *VM) BatchedParseBlock(ctx context.Context, blks [][]byte) ([]snowman.B
 		statelessBlockDescs = make([]partialData, 0, len(blks))
 		innerBlockBytes     = make([][]byte, 0, len(blks))
 	)
+
+	parsingResults := statelessblock.ParseBlocks(blks, vm.ctx.ChainID)
+
 	for ; blocksIndex < len(blks); blocksIndex++ {
-		blkBytes := blks[blocksIndex]
-		statelessBlock, err := statelessblock.Parse(blkBytes)
+		statelessBlock, err := parsingResults[blocksIndex].Block, parsingResults[blocksIndex].Err
 		if err != nil {
 			break
 		}
@@ -124,21 +118,13 @@ func (vm *VM) BatchedParseBlock(ctx context.Context, blks [][]byte) ([]snowman.B
 	innerBlockBytes = append(innerBlockBytes, blks[blocksIndex:]...)
 
 	// parse all inner blocks at once
-	innerBlks, err := vm.batchedVM.BatchedParseBlock(ctx, innerBlockBytes)
+	innerBlks, err := block.BatchedParseBlock(ctx, vm.ChainVM, innerBlockBytes)
 	if err != nil {
 		return nil, err
 	}
 	for ; innerBlocksIndex < len(statelessBlockDescs); innerBlocksIndex++ {
 		statelessBlockDesc := statelessBlockDescs[innerBlocksIndex]
 		statelessBlk := statelessBlockDesc.block
-		blkID := statelessBlk.ID()
-
-		_, status, err := vm.State.GetBlock(blkID)
-		if err == database.ErrNotFound {
-			status = choices.Processing
-		} else if err != nil {
-			return nil, err
-		}
 
 		if statelessSignedBlock, ok := statelessBlk.(statelessblock.SignedBlock); ok {
 			blocks[statelessBlockDesc.index] = &postForkBlock{
@@ -146,7 +132,6 @@ func (vm *VM) BatchedParseBlock(ctx context.Context, blks [][]byte) ([]snowman.B
 				postForkCommonComponents: postForkCommonComponents{
 					vm:       vm,
 					innerBlk: innerBlks[innerBlocksIndex],
-					status:   status,
 				},
 			}
 		} else {
@@ -155,7 +140,6 @@ func (vm *VM) BatchedParseBlock(ctx context.Context, blks [][]byte) ([]snowman.B
 				postForkCommonComponents: postForkCommonComponents{
 					vm:       vm,
 					innerBlk: innerBlks[innerBlocksIndex],
-					status:   status,
 				},
 			}
 		}
@@ -173,6 +157,5 @@ func (vm *VM) getStatelessBlk(blkID ids.ID) (statelessblock.Block, error) {
 	if currentBlk, exists := vm.verifiedBlocks[blkID]; exists {
 		return currentBlk.getStatelessBlk(), nil
 	}
-	statelessBlock, _, err := vm.State.GetBlock(blkID)
-	return statelessBlock, err
+	return vm.State.GetBlock(blkID)
 }

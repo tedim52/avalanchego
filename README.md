@@ -17,12 +17,13 @@ The minimum recommended hardware specification for nodes connected to Mainnet is
 - CPU: Equivalent of 8 AWS vCPU
 - RAM: 16 GiB
 - Storage: 1 TiB
+  - Nodes running for very long periods of time or nodes with custom configurations may observe higher storage requirements.
 - OS: Ubuntu 20.04/22.04 or macOS >= 12
 - Network: Reliable IPv4 or IPv6 network connection, with an open public port.
 
 If you plan to build AvalancheGo from source, you will also need the following software:
 
-- [Go](https://golang.org/doc/install) version >= 1.18.1
+- [Go](https://golang.org/doc/install) version >= 1.22.8
 - [gcc](https://gcc.gnu.org/)
 - g++
 
@@ -59,7 +60,7 @@ Install AvalancheGo using an `apt` repository.
 
 #### Adding the APT Repository
 
-If you have already added the APT repository, you do not need to add it again.
+If you already have the APT repository added, you do not need to add it again.
 
 To add the repository on Ubuntu, run:
 
@@ -72,7 +73,7 @@ exit
 
 #### Installing the Latest Version
 
-After adding the APT repository, install avalanchego by running:
+After adding the APT repository, install `avalanchego` by running:
 
 ```sh
 sudo apt update
@@ -87,9 +88,9 @@ The Avalanche binary to be executed is named `avalanchego`.
 
 ### Docker Install
 
-Make sure docker is installed on the machine - so commands like `docker run` etc. are available.
+Make sure Docker is installed on the machine - so commands like `docker run` etc. are available.
 
-Building the docker image of latest avalanchego branch can be done by running:
+Building the Docker image of latest `avalanchego` branch can be done by running:
 
 ```sh
 ./scripts/build_image.sh
@@ -101,7 +102,7 @@ To check the built image, run:
 docker image ls
 ```
 
-The image should be tagged as `avaplatform/avalanchego:xxxxxxxx`, where `xxxxxxxx` is the shortened commit of the Avalanche source it was built from. To run the avalanche node, run:
+The image should be tagged as `avaplatform/avalanchego:xxxxxxxx`, where `xxxxxxxx` is the shortened commit of the Avalanche source it was built from. To run the Avalanche node, run:
 
 ```sh
 docker run -ti -p 9650:9650 -p 9651:9651 avaplatform/avalanchego:xxxxxxxx /avalanchego/build/avalanchego
@@ -131,11 +132,16 @@ To connect to the Fuji Testnet, run:
 
 ### Creating a Local Testnet
 
-See [this tutorial.](https://docs.avax.network/build/tutorials/platform/create-a-local-test-network/)
+The [avalanche-cli](https://github.com/ava-labs/avalanche-cli) is the easiest way to start a local network.
+
+```sh
+avalanche network start
+avalanche network status
+```
 
 ## Bootstrapping
 
-A node needs to catch up to the latest network state before it can participate in consensus and serve API calls. This process, called bootstrapping, currently takes several days for a new node connected to Mainnet.
+A node needs to catch up to the latest network state before it can participate in consensus and serve API calls. This process (called bootstrapping) currently takes several days for a new node connected to Mainnet.
 
 A node will not [report healthy](https://docs.avax.network/build/avalanchego-apis/health) until it is done bootstrapping.
 
@@ -145,7 +151,7 @@ The bottleneck during bootstrapping is typically database IO. Using a more power
 
 ## Generating Code
 
-Avalanchego uses multiple tools to generate efficient and boilerplate code.
+AvalancheGo uses multiple tools to generate efficient and boilerplate code.
 
 ### Running protobuf codegen
 
@@ -153,13 +159,13 @@ To regenerate the protobuf go code, run `scripts/protobuf_codegen.sh` from the r
 
 This should only be necessary when upgrading protobuf versions or modifying .proto definition files.
 
-To use this script, you must have [buf](https://docs.buf.build/installation) (v1.10.0), protoc-gen-go (v1.28.0) and protoc-gen-go-grpc (v1.2.0) installed.
+To use this script, you must have [buf](https://docs.buf.build/installation) (v1.31.0), protoc-gen-go (v1.33.0) and protoc-gen-go-grpc (v1.3.0) installed.
 
 To install the buf dependencies:
 
 ```sh
-go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.28.0
-go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.2.0
+go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.33.0
+go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.3.0
 ```
 
 If you have not already, you may need to add `$GOPATH/bin` to your `$PATH`:
@@ -179,16 +185,9 @@ scripts/protobuf_codegen.sh
 
 For more information, refer to the [GRPC Golang Quick Start Guide](https://grpc.io/docs/languages/go/quickstart/).
 
-### Running protobuf codegen from docker
-
-```sh
-docker build -t avalanche:protobuf_codegen -f api/Dockerfile.buf .
-docker run -t -i -v $(pwd):/opt/avalanche -w/opt/avalanche avalanche:protobuf_codegen bash -c "scripts/protobuf_codegen.sh"
-```
-
 ### Running mock codegen
 
-To regenerate the [gomock](https://github.com/golang/mock) code, run `scripts/mock.gen.sh` from the root of the repo.
+To regenerate the [gomock](https://github.com/uber-go/mock) code, run `scripts/mock.gen.sh` from the root of the repo.
 
 This should only be necessary when modifying exported interfaces or after modifying `scripts/mock.mockgen.txt`.
 
@@ -245,4 +244,4 @@ To officially support a new platform, one must satisfy the following requirement
 
 **We and our community welcome responsible disclosures.**
 
-If you've discovered a security vulnerability, please report it via our [bug bounty program](https://hackenproof.com/avalanche/). Valid reports will be eligible for a reward (terms and conditions apply).
+Please refer to our [Security Policy](SECURITY.md) and [Security Advisories](https://github.com/ava-labs/avalanchego/security/advisories).

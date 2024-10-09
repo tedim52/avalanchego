@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2024, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package avax
@@ -12,18 +12,18 @@ import (
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/snow"
 	"github.com/ava-labs/avalanchego/utils"
-	"github.com/ava-labs/avalanchego/utils/crypto"
+	"github.com/ava-labs/avalanchego/utils/crypto/secp256k1"
 	"github.com/ava-labs/avalanchego/vms/components/verify"
 )
 
 var (
-	errNilTransferableOutput   = errors.New("nil transferable output is not valid")
-	errNilTransferableFxOutput = errors.New("nil transferable feature extension output is not valid")
-	errOutputsNotSorted        = errors.New("outputs not sorted")
+	ErrNilTransferableOutput   = errors.New("nil transferable output is not valid")
+	ErrNilTransferableFxOutput = errors.New("nil transferable feature extension output is not valid")
+	ErrOutputsNotSorted        = errors.New("outputs not sorted")
 
-	errNilTransferableInput   = errors.New("nil transferable input is not valid")
-	errNilTransferableFxInput = errors.New("nil transferable feature extension input is not valid")
-	errInputsNotSortedUnique  = errors.New("inputs not sorted and unique")
+	ErrNilTransferableInput   = errors.New("nil transferable input is not valid")
+	ErrNilTransferableFxInput = errors.New("nil transferable feature extension input is not valid")
+	ErrInputsNotSortedUnique  = errors.New("inputs not sorted and unique")
 
 	_ verify.Verifiable                  = (*TransferableOutput)(nil)
 	_ verify.Verifiable                  = (*TransferableInput)(nil)
@@ -65,7 +65,7 @@ type TransferableOutput struct {
 	Asset `serialize:"true"`
 	// FxID has serialize false because we don't want this to be encoded in bytes
 	FxID ids.ID          `serialize:"false" json:"fxID"`
-	Out  TransferableOut `serialize:"true" json:"output"`
+	Out  TransferableOut `serialize:"true"  json:"output"`
 }
 
 func (out *TransferableOutput) InitCtx(ctx *snow.Context) {
@@ -80,9 +80,9 @@ func (out *TransferableOutput) Output() TransferableOut {
 func (out *TransferableOutput) Verify() error {
 	switch {
 	case out == nil:
-		return errNilTransferableOutput
+		return ErrNilTransferableOutput
 	case out.Out == nil:
-		return errNilTransferableFxOutput
+		return ErrNilTransferableFxOutput
 	default:
 		return verify.All(&out.Asset, out.Out)
 	}
@@ -142,7 +142,7 @@ type TransferableInput struct {
 	Asset  `serialize:"true"`
 	// FxID has serialize false because we don't want this to be encoded in bytes
 	FxID ids.ID         `serialize:"false" json:"fxID"`
-	In   TransferableIn `serialize:"true" json:"input"`
+	In   TransferableIn `serialize:"true"  json:"input"`
 }
 
 // Input returns the feature extension input that this Input is using.
@@ -153,21 +153,21 @@ func (in *TransferableInput) Input() TransferableIn {
 func (in *TransferableInput) Verify() error {
 	switch {
 	case in == nil:
-		return errNilTransferableInput
+		return ErrNilTransferableInput
 	case in.In == nil:
-		return errNilTransferableFxInput
+		return ErrNilTransferableFxInput
 	default:
 		return verify.All(&in.UTXOID, &in.Asset, in.In)
 	}
 }
 
-func (in *TransferableInput) Less(other *TransferableInput) bool {
-	return in.UTXOID.Less(&other.UTXOID)
+func (in *TransferableInput) Compare(other *TransferableInput) int {
+	return in.UTXOID.Compare(&other.UTXOID)
 }
 
 type innerSortTransferableInputsWithSigners struct {
 	ins     []*TransferableInput
-	signers [][]*crypto.PrivateKeySECP256K1R
+	signers [][]*secp256k1.PrivateKey
 }
 
 func (ins *innerSortTransferableInputsWithSigners) Less(i, j int) bool {
@@ -195,7 +195,7 @@ func (ins *innerSortTransferableInputsWithSigners) Swap(i, j int) {
 
 // SortTransferableInputsWithSigners sorts the inputs and signers based on the
 // input's utxo ID
-func SortTransferableInputsWithSigners(ins []*TransferableInput, signers [][]*crypto.PrivateKeySECP256K1R) {
+func SortTransferableInputsWithSigners(ins []*TransferableInput, signers [][]*secp256k1.PrivateKey) {
 	sort.Sort(&innerSortTransferableInputsWithSigners{ins: ins, signers: signers})
 }
 
@@ -221,7 +221,7 @@ func VerifyTx(
 			fc.Produce(out.AssetID(), out.Output().Amount())
 		}
 		if !IsSortedTransferableOutputs(outs, c) {
-			return errOutputsNotSorted
+			return ErrOutputsNotSorted
 		}
 	}
 
@@ -233,8 +233,8 @@ func VerifyTx(
 			}
 			fc.Consume(in.AssetID(), in.Input().Amount())
 		}
-		if !utils.IsSortedAndUniqueSortable(ins) {
-			return errInputsNotSortedUnique
+		if !utils.IsSortedAndUnique(ins) {
+			return ErrInputsNotSortedUnique
 		}
 	}
 

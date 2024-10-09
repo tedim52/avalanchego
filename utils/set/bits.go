@@ -1,10 +1,10 @@
-// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2024, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package set
 
 import (
-	"fmt"
+	"encoding/hex"
 	"math/big"
 	"math/bits"
 )
@@ -67,13 +67,16 @@ func (b Bits) Contains(i int) bool {
 	return b.bits.Bit(i) == 1
 }
 
-// Len returns the bit length of this bitset
-func (b Bits) Len() int {
+// BitLen returns the bit length of this bitset
+func (b Bits) BitLen() int {
 	return b.bits.BitLen()
 }
 
-// HammingWeight returns the amount of 1's in the bitset
-func (b Bits) HammingWeight() int {
+// Len returns the amount of 1's in the bitset
+//
+// This is typically referred to as the "Hamming Weight"
+// of a set of bits.
+func (b Bits) Len() int {
 	result := 0
 	for _, word := range b.bits.Bits() {
 		result += bits.OnesCount(uint(word))
@@ -95,5 +98,5 @@ func BitsFromBytes(bytes []byte) Bits {
 
 // String returns the hex representation of this bitset
 func (b Bits) String() string {
-	return fmt.Sprintf("%x", b.bits.Bytes())
+	return hex.EncodeToString(b.bits.Bytes())
 }

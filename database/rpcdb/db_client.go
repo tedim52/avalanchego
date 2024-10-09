@@ -1,4 +1,4 @@
-// Copyright (C) 2019-2022, Ava Labs, Inc. All rights reserved.
+// Copyright (C) 2019-2024, Ava Labs, Inc. All rights reserved.
 // See the file LICENSE for licensing terms.
 
 package rpcdb
@@ -6,14 +6,13 @@ package rpcdb
 import (
 	"context"
 	"encoding/json"
+	"sync"
 
 	"google.golang.org/protobuf/types/known/emptypb"
 
 	"github.com/ava-labs/avalanchego/database"
-	"github.com/ava-labs/avalanchego/database/nodb"
 	"github.com/ava-labs/avalanchego/utils"
 	"github.com/ava-labs/avalanchego/utils/set"
-	"github.com/ava-labs/avalanchego/utils/wrappers"
 
 	rpcdbpb "github.com/ava-labs/avalanchego/proto/pb/rpcdb"
 )
@@ -28,7 +27,7 @@ var (
 type DatabaseClient struct {
 	client rpcdbpb.DatabaseClient
 
-	closed utils.AtomicBool
+	closed utils.Atomic[bool]
 }
 
 // NewClient returns a database instance connected to a remote database instance
@@ -44,7 +43,7 @@ func (db *DatabaseClient) Has(key []byte) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return resp.Has, errEnumToError[resp.Err]
+	return resp.Has, ErrEnumToError[resp.Err]
 }
 
 // Get attempts to return the value that was mapped to the key that was provided
@@ -55,7 +54,7 @@ func (db *DatabaseClient) Get(key []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return resp.Value, errEnumToError[resp.Err]
+	return resp.Value, ErrEnumToError[resp.Err]
 }
 
 // Put attempts to set the value this key maps to
@@ -67,7 +66,7 @@ func (db *DatabaseClient) Put(key, value []byte) error {
 	if err != nil {
 		return err
 	}
-	return errEnumToError[resp.Err]
+	return ErrEnumToError[resp.Err]
 }
 
 // Delete attempts to remove any mapping from the key
@@ -78,7 +77,7 @@ func (db *DatabaseClient) Delete(key []byte) error {
 	if err != nil {
 		return err
 	}
-	return errEnumToError[resp.Err]
+	return ErrEnumToError[resp.Err]
 }
 
 // NewBatch returns a new batch
@@ -105,12 +104,11 @@ func (db *DatabaseClient) NewIteratorWithStartAndPrefix(start, prefix []byte) da
 		Prefix: prefix,
 	})
 	if err != nil {
-		return &nodb.Iterator{Err: err}
+		return &database.IteratorError{
+			Err: err,
+		}
 	}
-	return &iterator{
-		db: db,
-		id: resp.Id,
-	}
+	return newIterator(db, resp.Id)
 }
 
 // Compact attempts to optimize the space utilization in the provided range
@@ -122,17 +120,17 @@ func (db *DatabaseClient) Compact(start, limit []byte) error {
 	if err != nil {
 		return err
 	}
-	return errEnumToError[resp.Err]
+	return ErrEnumToError[resp.Err]
 }
 
 // Close attempts to close the database
 func (db *DatabaseClient) Close() error {
-	db.closed.SetValue(true)
+	db.closed.Set(true)
 	resp, err := db.client.Close(context.Background(), &rpcdbpb.CloseRequest{})
 	if err != nil {
 		return err
 	}
-	return errEnumToError[resp.Err]
+	return ErrEnumToError[resp.Err]
 }
 
 func (db *DatabaseClient) HealthCheck(ctx context.Context) (interface{}, error) {
@@ -144,53 +142,31 @@ func (db *DatabaseClient) HealthCheck(ctx context.Context) (interface{}, error) 
 	return json.RawMessage(health.Details), nil
 }
 
-type keyValue struct {
-	key    []byte
-	value  []byte
-	delete bool
-}
-
 type batch struct {
-	db     *DatabaseClient
-	writes []keyValue
-	size   int
-}
+	database.BatchOps
 
-func (b *batch) Put(key, value []byte) error {
-	b.writes = append(b.writes, keyValue{utils.CopyBytes(key), utils.CopyBytes(value), false})
-	b.size += len(key) + len(value)
-	return nil
-}
-
-func (b *batch) Delete(key []byte) error {
-	b.writes = append(b.writes, keyValue{utils.CopyBytes(key), nil, true})
-	b.size += len(key)
-	return nil
-}
-
-func (b *batch) Size() int {
-	return b.size
+	db *DatabaseClient
 }
 
 func (b *batch) Write() error {
 	request := &rpcdbpb.WriteBatchRequest{}
-	keySet := set.NewSet[string](len(b.writes))
-	for i := len(b.writes) - 1; i >= 0; i-- {
-		kv := b.writes[i]
-		key := string(kv.key)
+	keySet := set.NewSet[string](len(b.Ops))
+	for i := len(b.Ops) - 1; i >= 0; i-- {
+		op := b.Ops[i]
+		key := string(op.Key)
 		if keySet.Contains(key) {
 			continue
 		}
 		keySet.Add(key)
 
-		if kv.delete {
+		if op.Delete {
 			request.Deletes = append(request.Deletes, &rpcdbpb.DeleteRequest{
-				Key: kv.key,
+				Key: op.Key,
 			})
 		} else {
 			request.Puts = append(request.Puts, &rpcdbpb.PutRequest{
-				Key:   kv.key,
-				Value: kv.value,
+				Key:   op.Key,
+				Value: op.Value,
 			})
 		}
 	}
@@ -199,29 +175,7 @@ func (b *batch) Write() error {
 	if err != nil {
 		return err
 	}
-	return errEnumToError[resp.Err]
-}
-
-func (b *batch) Reset() {
-	if cap(b.writes) > len(b.writes)*database.MaxExcessCapacityFactor {
-		b.writes = make([]keyValue, 0, cap(b.writes)/database.CapacityReductionFactor)
-	} else {
-		b.writes = b.writes[:0]
-	}
-	b.size = 0
-}
-
-func (b *batch) Replay(w database.KeyValueWriterDeleter) error {
-	for _, keyvalue := range b.writes {
-		if keyvalue.delete {
-			if err := w.Delete(keyvalue.key); err != nil {
-				return err
-			}
-		} else if err := w.Put(keyvalue.key, keyvalue.value); err != nil {
-			return err
-		}
-	}
-	return nil
+	return ErrEnumToError[resp.Err]
 }
 
 func (b *batch) Inner() database.Batch {
@@ -232,16 +186,85 @@ type iterator struct {
 	db *DatabaseClient
 	id uint64
 
-	data []*rpcdbpb.PutRequest
-	errs wrappers.Errs
+	data        []*rpcdbpb.PutRequest
+	fetchedData chan []*rpcdbpb.PutRequest
+
+	errLock sync.RWMutex
+	err     error
+
+	reqUpdateError chan chan struct{}
+
+	once     sync.Once
+	onClose  chan struct{}
+	onClosed chan struct{}
+}
+
+func newIterator(db *DatabaseClient, id uint64) *iterator {
+	it := &iterator{
+		db:             db,
+		id:             id,
+		fetchedData:    make(chan []*rpcdbpb.PutRequest),
+		reqUpdateError: make(chan chan struct{}),
+		onClose:        make(chan struct{}),
+		onClosed:       make(chan struct{}),
+	}
+	go it.fetch()
+	return it
+}
+
+// Invariant: fetch is the only thread with access to send requests to the
+// server's iterator. This is needed because iterators are not thread safe and
+// the server expects the client (us) to only ever issue one request at a time
+// for a given iterator id.
+func (it *iterator) fetch() {
+	defer func() {
+		resp, err := it.db.client.IteratorRelease(context.Background(), &rpcdbpb.IteratorReleaseRequest{
+			Id: it.id,
+		})
+		if err != nil {
+			it.setError(err)
+		} else {
+			it.setError(ErrEnumToError[resp.Err])
+		}
+
+		close(it.fetchedData)
+		close(it.onClosed)
+	}()
+
+	for {
+		resp, err := it.db.client.IteratorNext(context.Background(), &rpcdbpb.IteratorNextRequest{
+			Id: it.id,
+		})
+		if err != nil {
+			it.setError(err)
+			return
+		}
+
+		if len(resp.Data) == 0 {
+			return
+		}
+
+		for {
+			select {
+			case it.fetchedData <- resp.Data:
+			case onUpdated := <-it.reqUpdateError:
+				it.updateError()
+				close(onUpdated)
+				continue
+			case <-it.onClose:
+				return
+			}
+			break
+		}
+	}
 }
 
 // Next attempts to move the iterator to the next element and returns if this
 // succeeded
 func (it *iterator) Next() bool {
-	if it.db.closed.GetValue() {
+	if it.db.closed.Get() {
 		it.data = nil
-		it.errs.Add(database.ErrClosed)
+		it.setError(database.ErrClosed)
 		return false
 	}
 	if len(it.data) > 1 {
@@ -250,32 +273,24 @@ func (it *iterator) Next() bool {
 		return true
 	}
 
-	resp, err := it.db.client.IteratorNext(context.Background(), &rpcdbpb.IteratorNextRequest{
-		Id: it.id,
-	})
-	if err != nil {
-		it.errs.Add(err)
-		return false
-	}
-	it.data = resp.Data
+	it.data = <-it.fetchedData
 	return len(it.data) > 0
 }
 
 // Error returns any that occurred while iterating
 func (it *iterator) Error() error {
-	if it.errs.Errored() {
-		return it.errs.Err
+	if err := it.getError(); err != nil {
+		return err
 	}
 
-	resp, err := it.db.client.IteratorError(context.Background(), &rpcdbpb.IteratorErrorRequest{
-		Id: it.id,
-	})
-	if err != nil {
-		it.errs.Add(err)
-	} else {
-		it.errs.Add(errEnumToError[resp.Err])
+	onUpdated := make(chan struct{})
+	select {
+	case it.reqUpdateError <- onUpdated:
+		<-onUpdated
+	case <-it.onClosed:
 	}
-	return it.errs.Err
+
+	return it.getError()
 }
 
 // Key returns the key of the current element
@@ -296,12 +311,39 @@ func (it *iterator) Value() []byte {
 
 // Release frees any resources held by the iterator
 func (it *iterator) Release() {
-	resp, err := it.db.client.IteratorRelease(context.Background(), &rpcdbpb.IteratorReleaseRequest{
+	it.once.Do(func() {
+		close(it.onClose)
+		<-it.onClosed
+	})
+}
+
+func (it *iterator) updateError() {
+	resp, err := it.db.client.IteratorError(context.Background(), &rpcdbpb.IteratorErrorRequest{
 		Id: it.id,
 	})
 	if err != nil {
-		it.errs.Add(err)
+		it.setError(err)
 	} else {
-		it.errs.Add(errEnumToError[resp.Err])
+		it.setError(ErrEnumToError[resp.Err])
 	}
+}
+
+func (it *iterator) setError(err error) {
+	if err == nil {
+		return
+	}
+
+	it.errLock.Lock()
+	defer it.errLock.Unlock()
+
+	if it.err == nil {
+		it.err = err
+	}
+}
+
+func (it *iterator) getError() error {
+	it.errLock.RLock()
+	defer it.errLock.RUnlock()
+
+	return it.err
 }
