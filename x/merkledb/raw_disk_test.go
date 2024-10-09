@@ -3,16 +3,13 @@ package merkledb
 import (
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/utils/maybe"
-	"github.com/ava-labs/avalanchego/utils/perms"
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
 
 const (
-	testShutdownByte = []byte{0x00}
+	testShutdownByte = 0x00
 	testDbFilename   = "test.db"
 )
 
@@ -56,11 +53,11 @@ func TestEncodeDiskBranchNode(t *testing.T) {
 func TestReadNodeFromDisk(t *testing.T) {
 	r := require.New(t)
 
-	addr := diskAddress{
-		offset: 10,
-		size:   100,
+	branchNodeChildAddr := &diskAddress{
+		offset: 51,
+		size:   50,
 	}
-	child1 := &diskChild{
+	branchNodeChild := &diskChild{
 		child: child{
 			compressedKey: Key{
 				length: 0,
@@ -69,58 +66,64 @@ func TestReadNodeFromDisk(t *testing.T) {
 			id:       ids.GenerateTestID(),
 			hasValue: false,
 		},
-		address: diskAddress{
-			offset: 10,
-			size:   100,
-		},
+		address: *branchNodeChildAddr,
 	}
-	branchNode1 := &diskBranchNode{
+	branchNode := &diskBranchNode{
 		value: maybe.Maybe[[]byte]{},
 		children: map[byte]*diskChild{
-			0x0: child1,
+			0x0: branchNodeChild,
 		},
 	}
 
-	disk, err := newRawDiskForTesting([]*diskBranchNode{branchNode1})
+	dir := t.TempDir()
+	disk, err := newRawDisk(dir)
+
+	branchNodeBytes := encodeDiskBranchNode(branchNode)
+	err = disk.writeDiskAtNode(0, branchNodeBytes)
 	r.NoError(err)
-	disk.readNodeFromDisk()
 
+	branchNodeFromDisk, err := disk.readNodeFromDisk(&diskAddress{
+		offset: 0,
+		size:   int64(len(branchNodeBytes)),
+	})
+	require.NoError(t, err)
+
+	require.Equal(t, branchNode, branchNodeFromDisk)
 }
 
-func newRawDiskForTesting(nodes []*diskBranchNode) (*rawDisk, error) {
-	dir, err := os.MkdirTemp("", "rawdisk-test")
-	if err != nil {
-		return nil, err
-	}
-
-	file, err := os.OpenFile(filepath.Join(dir, testDbFilename), os.O_RDWR|os.O_CREATE, perms.ReadWrite)
-	if err != nil {
-		return nil, err
-	}
-	r := &rawDisk{file: file}
-
-	// write shutdown byte
-	err = r.setShutdownType(testShutdownByte)
-	if err != nil {
-		return nil, err
-	}
-
-	// write root key address
-	_, err = file.WriteAt(testRootKeyAddress, 1)
-	if err != nil {
-		return nil, err
-	}
-
-	// write test disk branch nodes
-	offset := int64(2)
-	for _, node := range nodes {
-		nodeBytes := encodeDiskBranchNode(node)
-		_, err = file.WriteAt(nodeBytes, node.value)
-		if err != nil {
-			return nil, err
-		}
-		offset = offset + int64(len(nodeBytes)) + 1
-	}
-
-	return r, nil
-}
+//
+//func newRawDiskForTesting(nodes []*diskBranchNode) (*rawDisk, error) {
+//	dir, err := os.MkdirTemp("", "rawdisk-test")
+//	if err != nil {
+//		return nil, err
+//	}
+//
+//	file, err := os.OpenFile(filepath.Join(dir, testDbFilename), os.O_RDWR|os.O_CREATE, perms.ReadWrite)
+//	if err != nil {
+//		return nil, err
+//	}
+//	r := &rawDisk{file: file}
+//
+//	// write shutdown byte
+//	err = r.setShutdownType([]byte{testShutdownByte})
+//	if err != nil {
+//		return nil, err
+//	}
+//
+//	// write root key address
+//	_, err = file.WriteAt(testRootKeyAddress, 1)
+//	if err != nil {
+//		return nil, err
+//	}
+//
+//	// write test disk branch nodes
+//	for _, node := range nodes {
+//		nodeBytes := encodeDiskBranchNode(node)
+//		_, err = file.WriteAt(nodeBytes, node.offset)
+//		if err != nil {
+//			return nil, err
+//		}
+//	}
+//
+//	return r, nil
+//}

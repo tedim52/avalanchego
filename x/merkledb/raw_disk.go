@@ -20,6 +20,10 @@ const (
 	rootKeyDiskAddressOffset = 1
 )
 
+var (
+	ErrFailedToFindNode = errors.New("Failed to find node.")
+)
+
 // [offset:offset+size]
 type diskAddress struct {
 	offset int64
@@ -58,14 +62,16 @@ type rawDisk struct {
 	// [1,17] = diskAddress of root key
 	// [18,] = node store
 	file *os.File
+
+	hasher Hasher
 }
 
-func newRawDisk(dir string) (*rawDisk, error) {
+func newRawDisk(dir string, hasher Hasher) (*rawDisk, error) {
 	file, err := os.OpenFile(filepath.Join(dir, fileName), os.O_RDWR|os.O_CREATE, perms.ReadWrite)
 	if err != nil {
 		return nil, err
 	}
-	return &rawDisk{file: file}, nil
+	return &rawDisk{file: file, hasher: hasher}, nil
 }
 
 func (r *rawDisk) getShutdownType() ([]byte, error) {
@@ -119,7 +125,70 @@ func (r *rawDisk) Clear() error {
 }
 
 func (r *rawDisk) getNode(key Key, hasValue bool) (*node, error) {
-	return nil, errors.New("not implemented")
+	// read the root node
+	var err error
+	diskAddressBytes := make([]byte, 16)
+	_, err = r.file.ReadAt(diskAddressBytes, rootKeyDiskAddressOffset)
+	if err != nil {
+		return nil, err
+	}
+
+	diskAddr := &diskAddress{}
+	diskAddr.decode(diskAddressBytes)
+	merkleRootNode, err := r.readNodeFromDisk(diskAddr)
+	if err != nil {
+		return nil, err
+	}
+	//if !key.HasPrefix(merkleRootNode) {
+	//	return nil
+	//}
+	var (
+		// all node paths start at the root
+		currentNode    = merkleRootNode
+		currentNodeKey = ToKey([]byte{})
+		tokenSize      = 16 // TODO: configure branch factor
+	)
+	//if err := visitNode(currentNode); err != nil {
+	//	return err
+	//}
+	// while the entire path hasn't been matched
+
+	for currentNodeKey.length < key.length {
+		// confirm that a child exists and grab its ID before attempting to load it
+		nextChildEntry, hasChild := currentNode.children[key.Token(currentNodeKey.length, tokenSize)]
+
+		if !hasChild || !key.iteratedHasPrefix(nextChildEntry.child.compressedKey, currentNodeKey.length+tokenSize, tokenSize) {
+			// there was no child along the path or the child that was there doesn't match the remaining path
+			return nil, fmt.Errorf("%w: No node at key %x", ErrFailedToFindNode, key.Bytes())
+		}
+		// grab the next node along the path
+		// get child node
+		childNode, err := r.readNodeFromDisk(&nextChildEntry.address)
+		if err != nil {
+			return nil, err
+		}
+
+		currentNode = childNode
+		currentNodeKey = key.Take(currentNodeKey.length + tokenSize + nextChildEntry.child.compressedKey.length)
+	}
+
+	return convertDiskBranchNodeToNode(key, currentNode, r.hasher), nil
+}
+
+func convertDiskBranchNodeToNode(key Key, dbn *diskBranchNode, hasher Hasher) *node {
+	nodeChildren := make(map[byte]*child, len(dbn.children))
+	for childByte, dChild := range dbn.children {
+		nodeChildren[childByte] = &dChild.child
+	}
+	n := &node{
+		dbNode: dbNode{
+			value:    dbn.value,
+			children: nodeChildren,
+		},
+		key: key,
+	}
+	n.setValueDigest(hasher)
+	return n
 }
 
 func (r *rawDisk) readNodeFromDisk(address *diskAddress) (*diskBranchNode, error) {
@@ -137,6 +206,14 @@ func (r *rawDisk) readNodeFromDisk(address *diskAddress) (*diskBranchNode, error
 	}
 
 	return dbn, nil
+}
+
+func (r *rawDisk) writeDiskAtNode(offset int64, branchNodeBytes []byte) error {
+	_, err := r.file.WriteAt(branchNodeBytes, offset)
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func (r *rawDisk) cacheSize() int {
