@@ -179,6 +179,7 @@ func (r *rawDisk) writeChanges(ctx context.Context, changes *changeSummary) erro
 		return fmt.Errorf("failed to allocate '%d' bytes for change", fileSize+changeSize)
 	}
 
+	visited := make(map[Key]bool, len(changes.nodes))
 	for len(frontierSet) > 0 {
 		currNode := frontierSet[0]
 		frontierSet = frontierSet[1 : len(frontierSet)+1]
@@ -207,8 +208,11 @@ func (r *rawDisk) writeChanges(ctx context.Context, changes *changeSummary) erro
 			}
 		}
 
-		// append the parent of the node for processing
-		frontierSet = append(frontierSet, parentNodeWithKey)
+		visited[currNode.key] = true
+
+		if _, alreadyProcessed := visited[parentNodeWithKey.key]; !alreadyProcessed {
+			frontierSet = append(frontierSet, parentNodeWithKey)
+		}
 	}
 
 	return nil
