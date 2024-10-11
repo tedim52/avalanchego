@@ -139,6 +139,7 @@ func (r *rawDisk) writeChanges(ctx context.Context, changes *changeSummary) erro
 		var dbn *diskBranchNode
 		dbn.value = changeNode.after.value
 
+		// add leaf nodes to frontier set
 		if len(changeNode.after.children) == 0 {
 			frontierSet = append(frontierSet, diskBranchNodeWithKey{
 				key: key,
@@ -196,7 +197,7 @@ func (r *rawDisk) writeChanges(ctx context.Context, changes *changeSummary) erro
 		parentNodeWithKey, ok := childToParentMap[currNode.key]
 		if !ok {
 			// the only node with no parent should be the root node in which case we can continue as it should be the last node processed
-			// TODO: check to ensure this node is the indeed root node before contineuing?
+			// TODO: check to ensure this node is the indeed root node before continueing?
 			continue
 		}
 
