@@ -118,7 +118,6 @@ func (r *rawDisk) getRootKey() ([]byte, error) {
 }
 
 func (r *rawDisk) writeChanges(ctx context.Context, changes *changeSummary) error {
-	// get file offset
 	fileInfo, err := r.file.Stat()
 	if err != nil {
 		return fmt.Errorf("could not retrieve file info: %v", err.Error())
@@ -164,7 +163,7 @@ func (r *rawDisk) writeChanges(ctx context.Context, changes *changeSummary) erro
 
 		dbnSize := int64(encodeDiskBranchNodeSize(dbn))
 
-		// assign this node an address
+		// assign this node an address at the end of the file
 		nodeToDiskAddressMap[key] = diskAddress{
 			offset: currOffset,
 			size:   dbnSize,
@@ -174,19 +173,17 @@ func (r *rawDisk) writeChanges(ctx context.Context, changes *changeSummary) erro
 		changeSize = changeSize + dbnSize
 	}
 
-	// allocated space needed for this change in the file once to prevent multiple allocation while writing
+	// allocated space needed for change once to prevent multiple allocations while writing
 	err = r.file.Truncate(fileSize + changeSize)
 	if err != nil {
 		return fmt.Errorf("failed to allocate '%d' bytes for change", fileSize+changeSize)
 	}
 
-	// while queue is not empty:
 	for len(frontierSet) > 0 {
-		// pop node off the frontier set
 		currNode := frontierSet[0]
 		frontierSet = frontierSet[1 : len(frontierSet)+1]
 
-		// write that node to disk address that we assigned
+		// write nodes
 		currNodeBytes := encodeDiskBranchNode(currNode.dbn)
 		diskAddr := nodeToDiskAddressMap[currNode.key]
 		err := r.writeDiskAtNode(diskAddr.offset, currNodeBytes)
@@ -194,15 +191,14 @@ func (r *rawDisk) writeChanges(ctx context.Context, changes *changeSummary) erro
 			return fmt.Errorf("failed to write node with key '%v' bytes to disk at offset '%d'", currNode.key, diskAddr.offset)
 		}
 
-		// use the parent node map to determine the nodes parent
+		// update this parent to point to the child's updated location on disk
 		parentNodeWithKey, ok := childToParentMap[currNode.key]
 		if !ok {
-			// the only node with no parent key should be the root node in which case we can continue and this function should be done
-			// TODO: maybe check to ensure the current node is the root node? before continueing
+			// the only node with no parent should be the root node in which case we can continue as it should be the last node processed
+			// TODO: check to ensure this node is the indeed root node before contineuing?
 			continue
 		}
 
-		// update this parent to point to the childs updated location on disk
 		parentNode := parentNodeWithKey.dbn
 		for _, childNode := range parentNode.children {
 			// if this check passes, this child on the parent node corresponds to [currNode]
