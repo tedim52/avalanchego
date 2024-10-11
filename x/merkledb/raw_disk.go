@@ -63,15 +63,16 @@ type rawDisk struct {
 	// [18,] = node store
 	file *os.File
 
-	hasher Hasher
+	hasher    Hasher
+	tokenSize int
 }
 
-func newRawDisk(dir string, hasher Hasher) (*rawDisk, error) {
+func newRawDisk(dir string, hasher Hasher, tokenSize int) (*rawDisk, error) {
 	file, err := os.OpenFile(filepath.Join(dir, fileName), os.O_RDWR|os.O_CREATE, perms.ReadWrite)
 	if err != nil {
 		return nil, err
 	}
-	return &rawDisk{file: file, hasher: hasher}, nil
+	return &rawDisk{file: file, hasher: hasher, tokenSize: tokenSize}, nil
 }
 
 func (r *rawDisk) getShutdownType() ([]byte, error) {
@@ -117,7 +118,104 @@ func (r *rawDisk) getRootKey() ([]byte, error) {
 }
 
 func (r *rawDisk) writeChanges(ctx context.Context, changes *changeSummary) error {
-	return errors.New("not implemented")
+	// get file offset
+	fileInfo, err := r.file.Stat()
+	if err != nil {
+		return fmt.Errorf("could not retrieve file info: %v", err.Error())
+	}
+
+	fileSize := fileInfo.Size()
+	currOffset := fileSize
+	changeSize := int64(0)
+
+	type diskBranchNodeWithKey struct {
+		key Key
+		dbn *diskBranchNode
+	}
+
+	frontierSet := make([]diskBranchNodeWithKey, len(changes.nodes))
+	nodeToDiskAddressMap := make(map[Key]diskAddress, len(changes.nodes))
+	childToParentMap := make(map[Key]diskBranchNodeWithKey)
+	for key, changeNode := range changes.nodes {
+		var dbn *diskBranchNode
+		dbn.value = changeNode.after.value
+
+		if len(changeNode.after.children) == 0 {
+			frontierSet = append(frontierSet, diskBranchNodeWithKey{
+				key: key,
+				dbn: dbn,
+			})
+		}
+
+		var diskChildren map[byte]*diskChild
+		for byteKey, childNode := range changeNode.after.children {
+			diskChildren[byteKey] = &diskChild{
+				child:   *childNode,
+				address: diskAddress{}, // leave empty, these will get updated later
+			}
+
+			childKey := key.Take(key.length + r.tokenSize + childNode.compressedKey.length)
+			childToParentMap[childKey] = diskBranchNodeWithKey{
+				key: key,
+				dbn: dbn,
+			}
+		}
+		dbn.children = diskChildren
+
+		dbnSize := int64(encodeDiskBranchNodeSize(dbn))
+
+		// assign this node an address
+		nodeToDiskAddressMap[key] = diskAddress{
+			offset: currOffset,
+			size:   dbnSize,
+		}
+
+		currOffset = currOffset + dbnSize + 1
+		changeSize = changeSize + dbnSize
+	}
+
+	// allocated space needed for this change in the file once to prevent multiple allocation while writing
+	err = r.file.Truncate(fileSize + changeSize)
+	if err != nil {
+		return fmt.Errorf("failed to allocate '%d' bytes for change", fileSize+changeSize)
+	}
+
+	// while queue is not empty:
+	for len(frontierSet) > 0 {
+		// pop node off the frontier set
+		currNode := frontierSet[0]
+		frontierSet = frontierSet[1 : len(frontierSet)+1]
+
+		// write that node to disk address that we assigned
+		currNodeBytes := encodeDiskBranchNode(currNode.dbn)
+		diskAddr := nodeToDiskAddressMap[currNode.key]
+		err := r.writeDiskAtNode(diskAddr.offset, currNodeBytes)
+		if err != nil {
+			return fmt.Errorf("failed to write node with key '%v' bytes to disk at offset '%d'", currNode.key, diskAddr.offset)
+		}
+
+		// use the parent node map to determine the nodes parent
+		parentNodeWithKey, ok := childToParentMap[currNode.key]
+		if !ok {
+			// the only node with no parent key should be the root node in which case we can continue and this function should be done
+			// TODO: maybe check to ensure the current node is the root node? before continueing
+			continue
+		}
+
+		// update this parent to point to the childs updated location on disk
+		parentNode := parentNodeWithKey.dbn
+		for _, childNode := range parentNode.children {
+			// if this check passes, this child on the parent node corresponds to [currNode]
+			if parentNodeWithKey.key.iteratedHasPrefix(childNode.child.compressedKey, parentNodeWithKey.key.length+r.tokenSize, r.tokenSize) {
+				childNode.address = diskAddr
+			}
+		}
+
+		// append the parent of the node for processing
+		frontierSet = append(frontierSet, parentNodeWithKey)
+	}
+
+	return nil
 }
 
 func (r *rawDisk) Clear() error {
@@ -139,37 +237,31 @@ func (r *rawDisk) getNode(key Key, hasValue bool) (*node, error) {
 	if err != nil {
 		return nil, err
 	}
-	//if !key.HasPrefix(merkleRootNode) {
+	//if !key.HasPrefix(merkleRootNode) { // TODO: figure out why this is needed
 	//	return nil
 	//}
 	var (
 		// all node paths start at the root
 		currentNode    = merkleRootNode
 		currentNodeKey = ToKey([]byte{})
-		tokenSize      = 16 // TODO: configure branch factor
 	)
-	//if err := visitNode(currentNode); err != nil {
-	//	return err
-	//}
-	// while the entire path hasn't been matched
 
 	for currentNodeKey.length < key.length {
 		// confirm that a child exists and grab its ID before attempting to load it
-		nextChildEntry, hasChild := currentNode.children[key.Token(currentNodeKey.length, tokenSize)]
+		nextChildEntry, hasChild := currentNode.children[key.Token(currentNodeKey.length, r.tokenSize)]
 
-		if !hasChild || !key.iteratedHasPrefix(nextChildEntry.child.compressedKey, currentNodeKey.length+tokenSize, tokenSize) {
+		if !hasChild || !key.iteratedHasPrefix(nextChildEntry.child.compressedKey, currentNodeKey.length+r.tokenSize, r.tokenSize) {
 			// there was no child along the path or the child that was there doesn't match the remaining path
 			return nil, fmt.Errorf("%w: No node at key %x", ErrFailedToFindNode, key.Bytes())
 		}
+
 		// grab the next node along the path
-		// get child node
 		childNode, err := r.readNodeFromDisk(&nextChildEntry.address)
 		if err != nil {
 			return nil, err
 		}
-
 		currentNode = childNode
-		currentNodeKey = key.Take(currentNodeKey.length + tokenSize + nextChildEntry.child.compressedKey.length)
+		currentNodeKey = key.Take(currentNodeKey.length + r.tokenSize + nextChildEntry.child.compressedKey.length)
 	}
 
 	return convertDiskBranchNodeToNode(key, currentNode, r.hasher), nil
